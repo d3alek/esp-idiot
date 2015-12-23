@@ -1,4 +1,4 @@
-#define VERSION 11
+#define VERSION 12
 
 #include <Arduino.h>
 
@@ -376,6 +376,8 @@ void loop(void)
   mqttPublish("state", "version", VERSION);
   mqttPublish("state", "time", globalTime);
   mqttPublish("state", "sleep", sleepSeconds);
+  mqttPublish("state", "wifi", WiFi.SSID().c_str());
+  mqttPublish("state", "thingspeak", thingspeakWriteApiKey.c_str());
   
   Serial.println("Published to mqtt.");
   updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
