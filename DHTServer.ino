@@ -372,7 +372,7 @@ void loop(void)
   toState(publish);
   mqttPublish("sense", "temperature", temp_c);
   mqttPublish("sense", "humidity", humidity);
-  mqttPublish("state", "voltage", voltage);
+  mqttPublish("sense", "voltage", voltage);
   mqttPublish("state", "version", VERSION);
   mqttPublish("state", "time", globalTime);
   mqttPublish("state", "sleep", sleepSeconds);
