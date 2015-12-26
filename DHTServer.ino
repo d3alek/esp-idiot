@@ -1,4 +1,4 @@
-#define VERSION 12
+#define VERSION 14
 
 #include <Arduino.h>
 
@@ -18,7 +18,7 @@
 
 ADC_MODE(ADC_VCC);
 
-#define ESP01_ID 16696635
+#define DHT22_CHIP_ID 320929
 #define DHTPIN  2
 #define DEFAULT_SLEEP_SECONDS 60*15
 #define HARD_RESET_PIN 0
@@ -41,7 +41,7 @@ PubSubClient mqttClient(wclient);
 // Initialize DHT sensor 
 // Using suggested method in
 // https://github.com/esp8266/Arduino/blob/master/doc/libraries.md#esp-specific-apis
-DHT dht(DHTPIN, DHT11); // ESP01 has a DHT22 attached, rest have a DHT11
+DHT dht(DHTPIN, chipId == DHT22_CHIP_ID ? DHT22 : DHT11); // ESP01 has a DHT22 attached, rest have a DHT11
 
 float humidity, temp_c;  // Values read from sensor
 
