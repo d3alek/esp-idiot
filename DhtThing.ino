@@ -1,4 +1,4 @@
-#define VERSION 14
+#define VERSION 15
 
 #include <Arduino.h>
 
@@ -215,8 +215,19 @@ bool mqttConnect() {
 
 const char* updateIndex = "<form method='POST' action='/update' enctype='multipart/form-data'><input type='file' name='update'><input type='submit' value='Update'></form>";
 
+void turnLedOn() {
+  digitalWrite(BUILTIN_LED, LOW);
+}
+
+void turnLedOff() {
+  digitalWrite(BUILTIN_LED, HIGH);
+}
+
 void startWifiCredentialsInputServer() {
-  Serial.print("Configuring access point...");
+  Serial.print("Configuring access point... Serial output will stop now as TXD is same as GPIO1 which controls the blue LED.");
+  pinMode(BUILTIN_LED, OUTPUT);
+  turnLedOn();
+  
   delay(1000);
   /* You can remove the password parameter if you want the AP to be open. */
   WiFi.softAP(uuid, password);
