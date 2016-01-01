@@ -1,4 +1,4 @@
-#define VERSION 15
+#define VERSION 16
 
 #include <Arduino.h>
 
@@ -15,6 +15,7 @@
 #include "EspPersistentStore.h"
 
 #include <ESP8266WebServer.h>
+#include <ArduinoJson.h>
 
 ADC_MODE(ADC_VCC);
 
@@ -46,7 +47,7 @@ DHT dht(DHTPIN, chipId == DHT22_CHIP_ID ? DHT22 : DHT11); // ESP01 has a DHT22 a
 float humidity, temp_c;  // Values read from sensor
 
 // ThingSpeak Settings
-String thingspeakWriteApiKey = "VYGY61814LFE1KXP";
+char thingspeakWriteApiKey[30];
 int sleepSeconds = DEFAULT_SLEEP_SECONDS;
 
 int readSensorTries = 0;
@@ -155,7 +156,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
-  char normalizedPayload[length];
+  char normalizedPayload[length+1];
   for (int i=0;i<length;i++) {
     normalizedPayload[i] = (char)payload[i];
   }
@@ -170,7 +171,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     strcpy(globalTime, normalizedPayload);
   }
   else if (strcmp(topic, thingspeakKeyTopic) == 0) {
-    thingspeakWriteApiKey = String(normalizedPayload);
+    strcpy(thingspeakWriteApiKey, normalizedPayload);
   }
   else if (strcmp(topic, sleepTopic) == 0) {
     sleepSeconds = atoi(normalizedPayload);
@@ -292,6 +293,7 @@ void setup(void)
   Serial.begin(115200);
 
   sprintf(uuid, "%s-%d", uuidPrefix, chipId);
+  strcpy(thingspeakWriteApiKey, "");
   Serial.print("UUID: ");
   Serial.println(uuid);
   
@@ -366,6 +368,31 @@ void mqttLoop(int seconds) {
   }
 }
 
+void iotPublish() {
+  const int maxLength = 200;
+  StaticJsonBuffer<maxLength> jsonBuffer;
+
+  JsonObject& root = jsonBuffer.createObject();
+  JsonObject& state = root.createNestedObject("state");
+  state["temperature"] = temp_c;
+  state["humidity"] = humidity;
+  state["voltage"] = voltage;
+  state["version"] = VERSION;
+  state["time"] = globalTime;
+  state["sleep"] = sleepSeconds;
+  state["wifi"] = WiFi.SSID().c_str();
+  state["thingspeak"] = thingspeakWriteApiKey;
+
+  int actualLength = root.measureLength();
+  if (actualLength >= maxLength) {
+    Serial.println("!!! Resulting JSON is too long, expect errors");
+  }
+  char value[maxLength];
+  root.printTo(value, maxLength);
+  mqttClient.publish(uuid, value, true);
+  root.printTo(Serial);
+}
+
 void loop(void)
 {
   loopResetButton();
@@ -388,10 +415,14 @@ void loop(void)
   mqttPublish("state", "time", globalTime);
   mqttPublish("state", "sleep", sleepSeconds);
   mqttPublish("state", "wifi", WiFi.SSID().c_str());
-  mqttPublish("state", "thingspeak", thingspeakWriteApiKey.c_str());
+  mqttPublish("state", "thingspeak", thingspeakWriteApiKey);
+
+  iotPublish();
   
   Serial.println("Published to mqtt.");
-  updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
+  if (strcmp(thingspeakWriteApiKey,"")) {
+    updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
+  }
   
   unsigned long awakeMillis = millis();
   Serial.println(awakeMillis);
@@ -431,16 +462,18 @@ void readTemperatureHumidity() {
     }
 }
 
-void updateThingspeak(float temperature, float humidity, int voltage, String key)
+void updateThingspeak(float temperature, float humidity, int voltage, const char* key)
 {
   WiFiClient client;
   const int httpPort = 80;
-  Serial.print("Updating Thingspeak " + key);
+  Serial.print("Updating Thingspeak ");
+  Serial.print(key);
   
   if (client.connect("api.thingspeak.com", 80))
   {         
     client.print("GET ");
-    client.print("/update?api_key=" + key);
+    client.print("/update?api_key=");
+    client.print(key);
     client.print("&field1="+String(temperature));
     client.print("&field2="+String(humidity));
     client.print("&field3="+String(voltage));
