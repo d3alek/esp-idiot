@@ -5,9 +5,11 @@
 
 #define WIFI_NAME_OFFSET 100
 #define WIFI_PASSWORD_OFFSET 150
+#define CONFIG_OFFSET 200
 
 #define WIFI_NAME_STORED_BIT 1
 #define WIFI_PASSWORD_STORED_BIT 2
+#define CONFIG_STORED_BIT 3
 
 bool began = false;
 
@@ -22,6 +24,7 @@ void EspPersistentStore::clear() {
   }
   EEPROM.write(WIFI_NAME_STORED_BIT, 0);
   EEPROM.write(WIFI_PASSWORD_STORED_BIT, 0);
+  EEPROM.write(CONFIG_STORED_BIT, 0);
   EEPROM.commit();
 }
 
@@ -57,6 +60,28 @@ void EspPersistentStore::putWifiName(const char* name) {
   _putString(WIFI_NAME_OFFSET, name);
   EEPROM.write(WIFI_NAME_STORED_BIT, 1);
   EEPROM.commit();
+}
+
+void EspPersistentStore::putConfig(const char* config) {
+  _putString(CONFIG_OFFSET, config);
+  EEPROM.write(CONFIG_STORED_BIT, 1);
+  EEPROM.commit();
+}
+
+bool EspPersistentStore::configStored() {
+  if (!began) {
+    Serial.println("Begin should be called first");
+  }
+  return EEPROM.read(CONFIG_STORED_BIT);
+}
+
+void EspPersistentStore::readConfig(char* config) {
+  if (!configStored()) {
+    Serial.println("Could not read config because none stored");
+    config = NULL;
+  }
+
+  _readString(CONFIG_OFFSET, config);
 }
 
 bool wifiNameStored() {

@@ -3,9 +3,12 @@ class EspPersistentStore {
       void begin();
       void putWifiName(const char* name);
       void putWifiPassword(const char* password);
+      void putConfig(const char* config);
       void readWifiName(char* wifiName);
       void readWifiPassword(char* wifiPassword);
+      void readConfig(char* config);
       bool wifiCredentialsStored();
+      bool configStored();
       void clear();
   private:
     void _putString(int startingOffset, const char* string);

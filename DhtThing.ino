@@ -1,4 +1,4 @@
-#define VERSION 16
+#define VERSION 18
 
 #include <Arduino.h>
 
@@ -57,21 +57,14 @@ int voltage;
 
 char uuid[15];
 char updateTopic[20];
-char sleepTopic[25];
-char thingspeakKeyTopic[30];
-const char updateTopicPrefix[] = "update/";
-const char timeTopic[] = "global/time";
-const char thingspeakKeyTopicPrefix[] = "config/thingspeak/";
-const char sleepTopicPrefix[] = "config/sleep/";
-
-char globalTime[20] = "unknown";
+bool configChanged = false;
 
 #define FOREACH_STATE(STATE) \
         STATE(boot)   \
         STATE(setup_wifi)  \
         STATE(connect_to_wifi) \
         STATE(connect_to_mqtt) \
-        STATE(mqtt_loop)   \
+        STATE(update_config) \
         STATE(read_senses)   \
         STATE(publish) \
         STATE(ota_update)    \
@@ -152,6 +145,41 @@ void updateFromS3(char* updatePath) {
   }
 }
 
+void loadConfig(char* string) {
+    StaticJsonBuffer<300> jsonBuffer;
+    JsonObject& root = jsonBuffer.parseObject(string);
+    if (!root.success()) {
+      Serial.print("Could not parse JSON from config string: ");
+      Serial.println(string);
+      return;
+    }
+    JsonObject& config = root["state"]["config"];
+    if (config.containsKey("thingspeak")) {
+      strcpy(thingspeakWriteApiKey, config["thingspeak"]);
+    }
+    if (config.containsKey("sleep")) {
+      sleepSeconds = config["sleep"];
+    }
+}
+
+void injectConfig(JsonObject& config) {
+  config["sleep"] = sleepSeconds;
+  config["thingspeak"] = thingspeakWriteApiKey;
+}
+
+void saveConfig() {
+  StaticJsonBuffer<200> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  JsonObject& stateObject = root.createNestedObject("state");
+  JsonObject& config = stateObject.createNestedObject("config");
+
+  injectConfig(config);
+
+  char configString[200];
+  root.printTo(configString, 200);
+  PersistentStore.putConfig(configString);
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
@@ -167,26 +195,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     mqttClient.publish(updateTopic, emptyMessage, 0, true);
     updateFromS3(normalizedPayload);
   }
-  else if (strcmp(topic, timeTopic) == 0) {
-    strcpy(globalTime, normalizedPayload);
-  }
-  else if (strcmp(topic, thingspeakKeyTopic) == 0) {
-    strcpy(thingspeakWriteApiKey, normalizedPayload);
-  }
-  else if (strcmp(topic, sleepTopic) == 0) {
-    sleepSeconds = atoi(normalizedPayload);
-  }
   else {
-    Serial.print("Don't know how to handle topic: ");
-    Serial.println(topic);
+    loadConfig(normalizedPayload);
+    configChanged = true;
   }
 }
 
 // Appends UUID to topic prefix and saves it in topic. Using separate
 // topic and topic prefix due to memory corruption issues otherwise.
 void constructTopicName(char* topic, const char* topicPrefix) {
-  topic[0] = 0;
-  strcat(topic, topicPrefix);
+  strcpy(topic, topicPrefix);
   strcat(topic, uuid);
 }
 bool mqttConnect() {
@@ -194,19 +212,15 @@ bool mqttConnect() {
   mqttClient.setServer(mqttHostname, mqttPort).setCallback(mqttCallback);
   if (mqttClient.connect(uuid, "nqquaqbf", "OocuDtvW1p9F")) {
     Serial.println("OK");
-    constructTopicName(updateTopic, updateTopicPrefix);
-    constructTopicName(sleepTopic, sleepTopicPrefix);
-    constructTopicName(thingspeakKeyTopic, thingspeakKeyTopicPrefix);
-    
+    constructTopicName(updateTopic, "update/");
+    char deltaTopic[30];
+    constructTopicName(deltaTopic, "things/");
+    strcat(deltaTopic, "/delta");
     sleepSeconds = DEFAULT_SLEEP_SECONDS;
     mqttClient.subscribe(updateTopic);
     Serial.println(updateTopic);
-    mqttClient.subscribe(timeTopic);
-    Serial.println(timeTopic);
-    mqttClient.subscribe(thingspeakKeyTopic);
-    Serial.println(thingspeakKeyTopic);
-    mqttClient.subscribe(sleepTopic);
-    Serial.println(sleepTopic);
+    mqttClient.subscribe(deltaTopic);
+    Serial.println(deltaTopic);
     return true;
   }
   Serial.print("failed, rc=");
@@ -333,34 +347,7 @@ void setup(void)
   }
 }
 
-void buildPath(char* topic, const char* pathPrefix, const char* pathSuffix) {
-  strcpy(topic, pathPrefix);
-  strcat(topic, "/");
-  strcat(topic, uuid);
-  strcat(topic, "/");
-  strcat(topic, pathSuffix);
-}
-
-void mqttPublish(const char* pathPrefix, const char* pathSuffix, int value) {
-  char topic[30];
-  buildPath(topic, pathPrefix, pathSuffix);
-  mqttClient.publish(topic, String(value).c_str(), true);
-}
-
-void mqttPublish(const char* pathPrefix, const char* pathSuffix, float value) {
-  char topic[30];
-  buildPath(topic, pathPrefix, pathSuffix);
-  mqttClient.publish(topic, String(value).c_str(), true);
-}
-
-void mqttPublish(const char* pathPrefix, const char* pathSuffix, const char* value) {
-  char topic[30];
-  buildPath(topic, pathPrefix, pathSuffix);
-  mqttClient.publish(topic, value, true);
-}
-
 void mqttLoop(int seconds) {
-  toState(mqtt_loop);
   long startTime = millis();
   while (millis() - startTime < seconds*1000) {
     mqttClient.loop();
@@ -368,29 +355,41 @@ void mqttLoop(int seconds) {
   }
 }
 
-void iotPublish() {
+void publishState() {
+  Serial.print("Publishing State: ");
   const int maxLength = 200;
   StaticJsonBuffer<maxLength> jsonBuffer;
 
   JsonObject& root = jsonBuffer.createObject();
-  JsonObject& state = root.createNestedObject("state");
-  state["temperature"] = temp_c;
-  state["humidity"] = humidity;
-  state["voltage"] = voltage;
-  state["version"] = VERSION;
-  state["time"] = globalTime;
-  state["sleep"] = sleepSeconds;
-  state["wifi"] = WiFi.SSID().c_str();
-  state["thingspeak"] = thingspeakWriteApiKey;
+  JsonObject& stateObject = root.createNestedObject("state");
+  JsonObject& reported = stateObject.createNestedObject("reported");
 
+  reported["version"] = VERSION;
+  reported["wifi"] = WiFi.SSID().c_str();
+
+  JsonObject& config = reported.createNestedObject("config");
+  
+  injectConfig(config);
+
+  if (state == publish) {
+    JsonObject& senses = reported.createNestedObject("senses");
+     
+    senses["temperature"] = temp_c;
+    senses["humidity"] = humidity;
+    senses["voltage"] = voltage;
+  }
+  
   int actualLength = root.measureLength();
   if (actualLength >= maxLength) {
     Serial.println("!!! Resulting JSON is too long, expect errors");
   }
   char value[maxLength];
   root.printTo(value, maxLength);
-  mqttClient.publish(uuid, value, true);
-  root.printTo(Serial);
+  char topic[30];
+  strcpy(topic,"things/");
+  strcat(topic,uuid);
+  mqttClient.publish(topic, value, true);
+  Serial.println(value);
 }
 
 void loop(void)
@@ -402,24 +401,35 @@ void loop(void)
     return;
   }
 
-  mqttLoop(5); // wait 5 seconds for any MQTT messages to go through
+  mqttLoop(2); // wait 2 seconds for update messages to go through
+
+  toState(update_config);
+  if (PersistentStore.configStored()) {
+    char config[200];
+    PersistentStore.readConfig(config);
+    if (config != NULL) {
+      loadConfig(config);
+    }
+  }
+  publishState();
+  
+  mqttLoop(5); // wait 5 seconds for deltas to go through
+  
+  if (configChanged) {
+    saveConfig();
+    publishState();
+  }
+  
   toState(read_senses);
   readTemperatureHumidity();
   readInternalVoltage();
 
   toState(publish);
-  mqttPublish("sense", "temperature", temp_c);
-  mqttPublish("sense", "humidity", humidity);
-  mqttPublish("sense", "voltage", voltage);
-  mqttPublish("state", "version", VERSION);
-  mqttPublish("state", "time", globalTime);
-  mqttPublish("state", "sleep", sleepSeconds);
-  mqttPublish("state", "wifi", WiFi.SSID().c_str());
-  mqttPublish("state", "thingspeak", thingspeakWriteApiKey);
-
-  iotPublish();
+  
+  publishState();
   
   Serial.println("Published to mqtt.");
+  
   if (strcmp(thingspeakWriteApiKey,"")) {
     updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
   }
