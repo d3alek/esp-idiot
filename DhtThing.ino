@@ -158,7 +158,7 @@ void loadConfig(char* string) {
       strcpy(thingspeakWriteApiKey, config["thingspeak"]);
     }
     if (config.containsKey("sleep")) {
-      sleepSeconds = config["sleep"];
+      sleepSeconds = atoi(config["sleep"]);
     }
 }
 
@@ -366,11 +366,14 @@ void publishState() {
 
   reported["version"] = VERSION;
   reported["wifi"] = WiFi.SSID().c_str();
+  reported["state"] = STATE_STRING[state];
 
   JsonObject& config = reported.createNestedObject("config");
-  
-  injectConfig(config);
 
+  if (state == update_config) {
+    injectConfig(config);
+  }
+  
   if (state == publish) {
     JsonObject& senses = reported.createNestedObject("senses");
      
@@ -438,7 +441,6 @@ void loop(void)
   Serial.println(awakeMillis);
 
   deepSleep(sleepSeconds);
-  
 } 
 
 void readInternalVoltage() {
