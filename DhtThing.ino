@@ -179,7 +179,9 @@ void loadConfig(char* string) {
 
 void injectConfig(JsonObject& config) {
   config["sleep"] = sleepSeconds;
-  config["thingspeak"] = thingspeakWriteApiKey;
+  if (strlen(thingspeakWriteApiKey) > 0) {
+    config["thingspeak"] = thingspeakWriteApiKey;
+  }
 }
 
 void saveConfig() {
@@ -473,7 +475,7 @@ void loop(void)
   
   Serial.println("Published to mqtt.");
   
-  if (strcmp(thingspeakWriteApiKey,"")) {
+  if (strlen(thingspeakWriteApiKey) > 0) {
     updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
   }
   
