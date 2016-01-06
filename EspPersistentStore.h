@@ -9,6 +9,8 @@ class EspPersistentStore {
       void readConfig(char* config);
       bool wifiCredentialsStored();
       bool configStored();
+      void putWifiAttemptsFailed(int attempts);
+      int readWifiAttemptsFailed();
       void clear();
   private:
     void _putString(int startingOffset, const char* string);

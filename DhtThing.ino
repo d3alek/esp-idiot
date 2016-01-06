@@ -1,4 +1,4 @@
-#define VERSION 18
+#define VERSION 19
 
 #include <Arduino.h>
 
@@ -15,6 +15,7 @@
 #include "EspPersistentStore.h"
 
 #include <ESP8266WebServer.h>
+
 #include <ArduinoJson.h>
 
 ADC_MODE(ADC_VCC);
@@ -24,6 +25,8 @@ ADC_MODE(ADC_VCC);
 #define DEFAULT_SLEEP_SECONDS 60*15
 #define HARD_RESET_PIN 0
 #define WIFI_CONNECT_RETRY_SECONDS 60
+#define BUILTIN_LED 2 // on my ESP-12s the blue led is connected to GPIO2 not GPIO1
+#define MAX_ATTEMPTS 3
 
 const int chipId = ESP.getChipId();
 
@@ -38,6 +41,9 @@ const int mqttPort = 13356;
 WiFiClient wclient;
 ESP8266WiFiMulti WiFiMulti;
 PubSubClient mqttClient(wclient);
+
+IPAddress apIP(192, 168, 1, 1);
+IPAddress netMsk(255, 255, 255, 0);
 
 // Initialize DHT sensor 
 // Using suggested method in
@@ -100,7 +106,14 @@ void deepSleep(int seconds) {
   ESP.deepSleep(seconds*1000000, WAKE_RF_DEFAULT);
 }
 
+void blink() {
+  turnLedOff();
+  delay(500);
+  turnLedOn();
+}
+
 void handleRoot() {
+  blink();
   String content = "<html><body><form action='/wifi-credentials-entered' method='POST'>";
   content += "Wifi Access Point Name:<input type='text' name='wifiName' placeholder='wifi name'><br>";
   content += "Wifi Password:<input type='password' name='wifiPassword' placeholder='wifi password'><br>";
@@ -109,9 +122,11 @@ void handleRoot() {
 }
 
 void handleWifiCredentialsEntered() {
+  blink();
   if (server.hasArg("wifiName") && server.hasArg("wifiPassword")) {
     PersistentStore.putWifiName(server.arg("wifiName").c_str());
     PersistentStore.putWifiPassword(server.arg("wifiPassword").c_str());
+    PersistentStore.putWifiAttemptsFailed(0);
     server.send(200, "text/plain", "Thank you, going to try to connect using the given credentials now.");
     deepSleep(1); // sleep for 1 second because restart does not seem to work
   }
@@ -239,35 +254,41 @@ void turnLedOff() {
 }
 
 void startWifiCredentialsInputServer() {
-  Serial.print("Configuring access point... Serial output will stop now as TXD is same as GPIO1 which controls the blue LED.");
+  Serial.println("Configuring access point...");
+  Serial.setDebugOutput(true);
+  delay(1000);
   pinMode(BUILTIN_LED, OUTPUT);
   turnLedOn();
   
   delay(1000);
-  /* You can remove the password parameter if you want the AP to be open. */
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIP, apIP, netMsk);
   WiFi.softAP(uuid, password);
 
   IPAddress myIP = WiFi.softAPIP();
-  Serial.print("AP IP address: ");
   Serial.println(myIP);
+  
   server.on("/", handleRoot);
   server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
   server.on("/update", HTTP_GET, [](){
+      blink();
       server.sendHeader("Connection", "close");
       server.sendHeader("Access-Control-Allow-Origin", "*");
       server.send(200, "text/html", updateIndex);
     });
   server.on("/update", HTTP_POST, [](){
+      blink();
       server.sendHeader("Connection", "close");
       server.sendHeader("Access-Control-Allow-Origin", "*");
       server.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
       ESP.restart();
     },[](){
+      blink();
       HTTPUpload& upload = server.upload();
       if(upload.status == UPLOAD_FILE_START){
         Serial.setDebugOutput(true);
         WiFiUDP::stopAll();
-        Serial.printf("Update: %s\n", upload.filename.c_str());
+        
         uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
         if(!Update.begin(maxSketchSpace)){//start with max available size
           Update.printError(Serial);
@@ -278,7 +299,7 @@ void startWifiCredentialsInputServer() {
         }
       } else if(upload.status == UPLOAD_FILE_END){
         if(Update.end(true)){ //true to set the size to the current progress
-          Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
+          // update success
         } else {
           Update.printError(Serial);
         }
@@ -287,18 +308,22 @@ void startWifiCredentialsInputServer() {
       yield();
     });
   server.begin();
-  Serial.println("HTTP server started");
+  blink();
 }
 
 void setupResetButton() {
   pinMode(HARD_RESET_PIN, INPUT);
 }
 
+void hardReset() {
+  toState(hard_reset);
+  PersistentStore.clear();
+  deepSleep(1);
+}
+
 void loopResetButton() {
   if(!digitalRead(HARD_RESET_PIN)) {
-    toState(hard_reset);
-    PersistentStore.clear();
-    deepSleep(1);
+    hardReset();
   }
 }
 
@@ -341,6 +366,19 @@ void setup(void)
   else {
     Serial.print("Error connecting: ");
     Serial.println(wifiConnectResult);
+    int attempts = PersistentStore.readWifiAttemptsFailed();
+    attempts++;
+    Serial.print("Attempts so far: ");
+    Serial.print(attempts);
+    Serial.print("/");
+    Serial.println(MAX_ATTEMPTS);
+    if (attempts >= MAX_ATTEMPTS) {
+      Serial.println("Doing a hard reset.");
+      hardReset();
+      deepSleep(1);
+      return;
+    }
+    PersistentStore.putWifiAttemptsFailed(attempts);
     delay(1000);
     loopResetButton();
     deepSleep(WIFI_CONNECT_RETRY_SECONDS);
@@ -374,9 +412,12 @@ void publishState() {
   
   if (state == publish) {
     JsonObject& senses = reported.createNestedObject("senses");
-     
-    senses["temperature"] = temp_c;
-    senses["humidity"] = humidity;
+    if (!isnan(temp_c)) {
+      senses["temperature"] = temp_c;  
+    }
+    if (!isnan(humidity)) {
+      senses["humidity"] = humidity;
+    }
     senses["voltage"] = voltage;
   }
   
@@ -399,6 +440,7 @@ void loop(void)
   
   if (state == setup_wifi) {
     server.handleClient();
+    delay(1000);
     return;
   }
 
