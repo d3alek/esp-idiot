@@ -357,7 +357,7 @@ void mqttLoop(int seconds) {
 
 void publishState() {
   Serial.print("Publishing State: ");
-  const int maxLength = 200;
+  const int maxLength = 300;
   StaticJsonBuffer<maxLength> jsonBuffer;
 
   JsonObject& root = jsonBuffer.createObject();
@@ -370,9 +370,7 @@ void publishState() {
 
   JsonObject& config = reported.createNestedObject("config");
 
-  if (state == update_config) {
-    injectConfig(config);
-  }
+  injectConfig(config);
   
   if (state == publish) {
     JsonObject& senses = reported.createNestedObject("senses");
