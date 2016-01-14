@@ -1,4 +1,4 @@
-#define VERSION 19
+#define VERSION 21
 
 #include <Arduino.h>
 
@@ -18,15 +18,15 @@
 
 #include <ArduinoJson.h>
 
+#include "IdiotLogger.h"
+
 ADC_MODE(ADC_VCC);
 
 #define DHT22_CHIP_ID 320929
 #define DHTPIN  2
 #define DEFAULT_SLEEP_SECONDS 60*15
 #define HARD_RESET_PIN 0
-#define WIFI_CONNECT_RETRY_SECONDS 60
 #define BUILTIN_LED 2 // on my ESP-12s the blue led is connected to GPIO2 not GPIO1
-#define MAX_ATTEMPTS 3
 
 const int chipId = ESP.getChipId();
 
@@ -63,6 +63,8 @@ int voltage;
 
 char uuid[15];
 char updateTopic[20];
+char pingTopic[20];
+char pongTopic[20];
 bool configChanged = false;
 
 #define FOREACH_STATE(STATE) \
@@ -88,17 +90,23 @@ static const char *STATE_STRING[] = {
     FOREACH_STATE(GENERATE_STRING)
 };
 
-int state = 0;
+int state = boot;
+
+IdiotLogger Logger;
 
 void toState(int newState) {
-  Serial.println();
-  Serial.print("[");
-  Serial.print(STATE_STRING[state]);
-  Serial.print("] -> [");
-  Serial.print(STATE_STRING[newState]);
-  Serial.println("]");
-  Serial.println();
+  Logger.println();
+  Logger.print("[");
+  Logger.print(STATE_STRING[state]);
+  Logger.print("] -> [");
+  Logger.print(STATE_STRING[newState]);
+  Logger.println("]");
+  Logger.println();
   state = newState;
+}
+
+void restart() {
+  deepSleep(1);
 }
 
 void deepSleep(int seconds) {
@@ -107,9 +115,16 @@ void deepSleep(int seconds) {
 }
 
 void blink() {
-  turnLedOff();
-  delay(500);
-  turnLedOn();
+  if (ledOn()) {
+    turnLedOff();
+    delay(500);
+    turnLedOn();
+  }
+  else {
+    turnLedOn();
+    delay(500);
+    turnLedOff();    
+  }
 }
 
 void handleRoot() {
@@ -121,51 +136,71 @@ void handleRoot() {
   server.send(200, "text/html", content);
 }
 
+void serveLogs() {
+  blink();
+  File logFile = Logger.getLogFile();
+  int logFileSize = logFile.size();
+  logFile.flush();
+  logFile.seek(0, SeekSet);
+  server.sendHeader("Content-Length", String(logFileSize));
+  server.sendHeader("Connection", "close");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/html", "");
+  WiFiClient client = server.client();
+
+  int sentSize = client.write(logFile, HTTP_DOWNLOAD_UNIT_SIZE);
+  if (sentSize != logFileSize) {
+    Logger.println("Sent different data length than expected");
+    Logger.print("Expected: "); Logger.println(logFileSize);
+    Logger.print("Actual: "); Logger.println(sentSize);
+  }
+}
+
 void handleWifiCredentialsEntered() {
   blink();
   if (server.hasArg("wifiName") && server.hasArg("wifiPassword")) {
     PersistentStore.putWifiName(server.arg("wifiName").c_str());
     PersistentStore.putWifiPassword(server.arg("wifiPassword").c_str());
-    PersistentStore.putWifiAttemptsFailed(0);
     server.send(200, "text/plain", "Thank you, going to try to connect using the given credentials now.");
-    deepSleep(1); // sleep for 1 second because restart does not seem to work
+    restart();
   }
   else {
     server.send(200, "text/plain", "No wifi credentials found in POST request.");
   }
 }
-
-void updateFromS3(char* updatePath) {
+const char* updateFromS3(char* updatePath) {
   toState(ota_update);
-  char updateUrl[100] = "http://esp-bin.s3-website-eu-west-1.amazonaws.com/";
+  char updateUrl[100] = "http://idiot-esp.s3-website-eu-west-1.amazonaws.com/updates/";
   strcat(updateUrl, updatePath);
-  Serial.print("Starting OTA update: ");
-  Serial.println(updateUrl);
+  Logger.print("Starting OTA update: ");
+  Logger.println(updateUrl);
   t_httpUpdate_return ret = ESPhttpUpdate.update(updateUrl);
 
-  Serial.print("OTA update finished: ");
-  Serial.println(ret);
+  Logger.print("OTA update finished: ");
+  Logger.println(ret);
   switch(ret) {
       case HTTP_UPDATE_FAILED:
-          Serial.println("HTTP_UPDATE_FAILED");
-          break;
+          Logger.println("HTTP_UPDATE_FAILED");
+          return "HTTP_UPDATE_FAILED";
 
       case HTTP_UPDATE_NO_UPDATES:
-          Serial.println("HTTP_UPDATE_NO_UPDATES");
-          break;
+          Logger.println("HTTP_UPDATE_NO_UPDATES");
+          return "HTTP_UPDATE_NO_UPDATES";
 
       case HTTP_UPDATE_OK:
-          Serial.println("HTTP_UPDATE_OK");
-          break;
+          Logger.println("HTTP_UPDATE_OK");
+          return "HTTP_UPDATE_OK";
   }
+
+  return "HTTP_UPDATE_UNKNOWN_RETURN_CODE";
 }
 
 void loadConfig(char* string) {
     StaticJsonBuffer<300> jsonBuffer;
     JsonObject& root = jsonBuffer.parseObject(string);
     if (!root.success()) {
-      Serial.print("Could not parse JSON from config string: ");
-      Serial.println(string);
+      Logger.print("Could not parse JSON from config string: ");
+      Logger.println(string);
       return;
     }
     JsonObject& config = root["state"]["config"];
@@ -198,19 +233,25 @@ void saveConfig() {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
+  Logger.print("Message arrived [");
+  Logger.print(topic);
+  Logger.print("] ");
   char normalizedPayload[length+1];
   for (int i=0;i<length;i++) {
     normalizedPayload[i] = (char)payload[i];
   }
   normalizedPayload[length]='\0';
-  Serial.println(normalizedPayload);
+  Logger.println(normalizedPayload);
+  char updateResultTopic[50];
+  strcpy(updateResultTopic, updateTopic);
+  strcat(updateResultTopic,"/result");
   if (strcmp(topic, updateTopic) == 0) {
     unsigned char emptyMessage[0];
     mqttClient.publish(updateTopic, emptyMessage, 0, true);
-    updateFromS3(normalizedPayload);
+    mqttClient.publish(updateResultTopic, updateFromS3(normalizedPayload), true);
+  }
+  else if (strcmp(topic, pingTopic) == 0) {
+    mqttClient.publish(pongTopic, normalizedPayload);
   }
   else {
     loadConfig(normalizedPayload);
@@ -225,27 +266,36 @@ void constructTopicName(char* topic, const char* topicPrefix) {
   strcat(topic, uuid);
 }
 bool mqttConnect() {
-  Serial.print("MQTT ");
+  Logger.print("MQTT ");
   mqttClient.setServer(mqttHostname, mqttPort).setCallback(mqttCallback);
   if (mqttClient.connect(uuid, "nqquaqbf", "OocuDtvW1p9F")) {
-    Serial.println("OK");
+    Logger.println("OK");
     constructTopicName(updateTopic, "update/");
     char deltaTopic[30];
     constructTopicName(deltaTopic, "things/");
     strcat(deltaTopic, "/delta");
+    constructTopicName(pingTopic, "ping/");
+    constructTopicName(pongTopic, "pong/");
+    
     sleepSeconds = DEFAULT_SLEEP_SECONDS;
     mqttClient.subscribe(updateTopic);
-    Serial.println(updateTopic);
+    Logger.println(updateTopic);
     mqttClient.subscribe(deltaTopic);
-    Serial.println(deltaTopic);
+    Logger.println(deltaTopic);
+    mqttClient.subscribe(pingTopic);
+    Logger.println(pingTopic);
     return true;
   }
-  Serial.print("failed, rc=");
-  Serial.println(mqttClient.state());
+  Logger.print("failed, rc=");
+  Logger.println(mqttClient.state());
   return false;
 }
 
 const char* updateIndex = "<form method='POST' action='/update' enctype='multipart/form-data'><input type='file' name='update'><input type='submit' value='Update'></form>";
+
+bool ledOn() {
+  return digitalRead(BUILTIN_LED) == LOW;
+}
 
 void turnLedOn() {
   digitalWrite(BUILTIN_LED, LOW);
@@ -255,21 +305,29 @@ void turnLedOff() {
   digitalWrite(BUILTIN_LED, HIGH);
 }
 
+void clearLogs() {
+  if (Logger.clearFile()) {
+    Logger.println("Logs cleared.");
+    server.send(200, "text/plain", "Success");
+  }
+  else {
+    server.send(200, "text/plain", "Failure");
+  }
+}
+
 void startWifiCredentialsInputServer() {
-  Serial.println("Configuring access point...");
-  Serial.setDebugOutput(true);
+  Logger.println("Configuring access point...");
   delay(1000);
   pinMode(BUILTIN_LED, OUTPUT);
   turnLedOn();
   
-  delay(1000);
   WiFi.mode(WIFI_AP);
   WiFi.softAPConfig(apIP, apIP, netMsk);
   WiFi.softAP(uuid, password);
 
   IPAddress myIP = WiFi.softAPIP();
-  Serial.println(myIP);
-  
+  Logger.println(myIP);
+
   server.on("/", handleRoot);
   server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
   server.on("/update", HTTP_GET, [](){
@@ -283,34 +341,53 @@ void startWifiCredentialsInputServer() {
       server.sendHeader("Connection", "close");
       server.sendHeader("Access-Control-Allow-Origin", "*");
       server.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
-      ESP.restart();
+      restart();
     },[](){
       blink();
       HTTPUpload& upload = server.upload();
       if(upload.status == UPLOAD_FILE_START){
-        Serial.setDebugOutput(true);
+        Logger.setDebugOutput(true);
         WiFiUDP::stopAll();
         
         uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
         if(!Update.begin(maxSketchSpace)){//start with max available size
-          Update.printError(Serial);
+          Update.printError(Logger);
         }
       } else if(upload.status == UPLOAD_FILE_WRITE){
         if(Update.write(upload.buf, upload.currentSize) != upload.currentSize){
-          Update.printError(Serial);
+          Update.printError(Logger);
         }
       } else if(upload.status == UPLOAD_FILE_END){
         if(Update.end(true)){ //true to set the size to the current progress
           // update success
         } else {
-          Update.printError(Serial);
+          Update.printError(Logger);
         }
-        Serial.setDebugOutput(false);
+        Logger.setDebugOutput(false);
       }
       yield();
     });
+  server.on("/logs", serveLogs);
+  server.on("/clear-logs", clearLogs);
   server.begin();
   blink();
+}
+
+void startLocalControlServer() {
+  Logger.println("Starting local control server...");
+  delay(1000);
+  pinMode(BUILTIN_LED, OUTPUT);
+  turnLedOff();
+  
+  WiFi.softAPConfig(apIP, apIP, netMsk);
+  WiFi.softAP(uuid, password);
+
+  IPAddress myIP = WiFi.softAPIP();
+  Logger.println(myIP);
+
+  server.on("/logs", serveLogs);
+  server.on("/clearLogs", clearLogs);
+  server.begin();
 }
 
 void setupResetButton() {
@@ -320,7 +397,7 @@ void setupResetButton() {
 void hardReset() {
   toState(hard_reset);
   PersistentStore.clear();
-  deepSleep(1);
+  restart();
 }
 
 void loopResetButton() {
@@ -331,60 +408,18 @@ void loopResetButton() {
 
 void setup(void)
 {
-  Serial.begin(115200);
-
+  Logger.begin(115200);
+  Logger.setDebugOutput(true);
+  
   sprintf(uuid, "%s-%d", uuidPrefix, chipId);
   strcpy(thingspeakWriteApiKey, "");
-  Serial.print("UUID: ");
-  Serial.println(uuid);
+  Logger.print("UUID: ");
+  Logger.println(uuid);
   
   dht.begin();
 
   PersistentStore.begin();
   setupResetButton();
-  loopResetButton();
-  
-  if (!PersistentStore.wifiCredentialsStored()) {
-    toState(setup_wifi);
-    startWifiCredentialsInputServer();
-    return;
-  }
-  toState(connect_to_wifi);
-  char wifiName[50];
-  PersistentStore.readWifiName(wifiName);
-  Serial.println(wifiName);
-  char wifiPassword[50];
-  PersistentStore.readWifiPassword(wifiPassword);
-  Serial.println(wifiPassword);
-  
-  WiFi.begin(wifiName, wifiPassword);
-  int wifiConnectResult = WiFi.waitForConnectResult();
-  if (wifiConnectResult == WL_CONNECTED) {
-    toState(connect_to_mqtt);
-    while (!mqttConnect()) {
-      delay(1000);
-    }
-  }
-  else {
-    Serial.print("Error connecting: ");
-    Serial.println(wifiConnectResult);
-    int attempts = PersistentStore.readWifiAttemptsFailed();
-    attempts++;
-    Serial.print("Attempts so far: ");
-    Serial.print(attempts);
-    Serial.print("/");
-    Serial.println(MAX_ATTEMPTS);
-    if (attempts >= MAX_ATTEMPTS) {
-      Serial.println("Doing a hard reset.");
-      hardReset();
-      deepSleep(1);
-      return;
-    }
-    PersistentStore.putWifiAttemptsFailed(attempts);
-    delay(1000);
-    loopResetButton();
-    deepSleep(WIFI_CONNECT_RETRY_SECONDS);
-  }
 }
 
 void mqttLoop(int seconds) {
@@ -396,7 +431,7 @@ void mqttLoop(int seconds) {
 }
 
 void publishState() {
-  Serial.print("Publishing State: ");
+  Logger.print("Publishing State: ");
   const int maxLength = 300;
   StaticJsonBuffer<maxLength> jsonBuffer;
 
@@ -425,7 +460,7 @@ void publishState() {
   
   int actualLength = root.measureLength();
   if (actualLength >= maxLength) {
-    Serial.println("!!! Resulting JSON is too long, expect errors");
+    Logger.println("!!! Resulting JSON is too long, expect errors");
   }
   char value[maxLength];
   root.printTo(value, maxLength);
@@ -433,95 +468,131 @@ void publishState() {
   strcpy(topic,"things/");
   strcat(topic,uuid);
   mqttClient.publish(topic, value, true);
-  Serial.println(value);
+  Logger.println(value);
 }
 
 void loop(void)
 {
   loopResetButton();
   
-  if (state == setup_wifi) {
-    server.handleClient();
-    delay(1000);
+  if (state == boot) {
+    if (!PersistentStore.wifiCredentialsStored()) {
+      toState(setup_wifi);
+      startWifiCredentialsInputServer();
+      return;
+    }
+    else {
+      toState(connect_to_wifi);
+    }
     return;
   }
-
-  mqttLoop(2); // wait 2 seconds for update messages to go through
-
-  toState(update_config);
-  if (PersistentStore.configStored()) {
-    char config[200];
-    PersistentStore.readConfig(config);
-    if (config != NULL) {
-      loadConfig(config);
+  else if (state == connect_to_wifi) {
+    char wifiName[50];
+    PersistentStore.readWifiName(wifiName);
+    Logger.println(wifiName);
+    char wifiPassword[50];
+    PersistentStore.readWifiPassword(wifiPassword);
+    Logger.println(wifiPassword);
+    
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.begin(wifiName, wifiPassword);
+    int wifiConnectResult = WiFi.waitForConnectResult();
+    if (wifiConnectResult == WL_CONNECTED) {
+      toState(connect_to_mqtt);
+      while (!mqttConnect()) { // TODO do not try infinitely
+        delay(1000);
+      }
     }
+    startLocalControlServer();
+    return;
   }
-  publishState();
   
-  mqttLoop(5); // wait 5 seconds for deltas to go through
+  server.handleClient();
   
-  if (configChanged) {
-    saveConfig();
+  if (state == setup_wifi) {
+    return;
+  }
+  else if (state == connect_to_mqtt) {
+    mqttLoop(2); // wait 2 seconds for update messages to go through
+    toState(update_config);
+  }
+  else if (state == update_config) {
+    if (PersistentStore.configStored()) {
+      char config[CONFIG_MAX_SIZE];
+      PersistentStore.readConfig(config);
+      if (config != NULL) {
+        loadConfig(config);
+      }
+    }
     publishState();
+    mqttLoop(5); // wait 5 seconds for deltas to go through
+    if (configChanged) {
+      saveConfig();
+      publishState();
+    }
+    toState(read_senses);
   }
-  
-  toState(read_senses);
-  readTemperatureHumidity();
-  readInternalVoltage();
-
-  toState(publish);
-  
-  publishState();
-  
-  Serial.println("Published to mqtt.");
-  
-  if (strlen(thingspeakWriteApiKey) > 0) {
-    updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
+  else if (state == read_senses) {
+    if (!readTemperatureHumidity()) {
+      delay(2000);
+      return; //to repeat next loop
+    }
+    readInternalVoltage();
+    toState(publish);
   }
+  else if (state == publish) {
+    publishState();
+    if (strlen(thingspeakWriteApiKey) > 0) {
+      updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
+    }
+    
+    unsigned long awakeMillis = millis();
+    Logger.println(awakeMillis);
   
-  unsigned long awakeMillis = millis();
-  Serial.println(awakeMillis);
-
-  deepSleep(sleepSeconds);
+    deepSleep(sleepSeconds);
+  }
 } 
 
 void readInternalVoltage() {
   voltage = ESP.getVcc();
-  Serial.print("Voltage: ");
-  Serial.println(voltage);
+  Logger.print("Voltage: ");
+  Logger.println(voltage);
 }
 
-void readTemperatureHumidity() {
-    Serial.print("DHT ");
-    delay(2000);
+bool readTemperatureHumidity() {
+    Logger.print("DHT ");
+    
     ++readSensorTries;
     humidity = dht.readHumidity();          // Read humidity (percent)
     temp_c = dht.readTemperature(false);     // Read temperature as Celsius
     if (isnan(humidity) || isnan(temp_c)) {
-      Serial.print(readSensorTries);
-      Serial.print(" ");
+      Logger.print(readSensorTries);
+      Logger.print(" ");
       if (readSensorTries <= maxReadSensorTries) {
-        readTemperatureHumidity();
+        return false;
       }
       else {
-        Serial.println("Giving up.");
+        Logger.println("Giving up.");
+        return true;
       }
     }
     else {
-      Serial.println("OK");
-      Serial.print("Temperature: ");
-      Serial.println(temp_c);
-      Serial.print("Humidity: ");
-      Serial.println(humidity);
+      Logger.println("OK");
+      Logger.print("Temperature: ");
+      Logger.println(temp_c);
+      Logger.print("Humidity: ");
+      Logger.println(humidity);
     }
+
+    return true;
 }
 
 void updateThingspeak(float temperature, float humidity, int voltage, const char* key)
 {
   WiFiClient client;
   const int httpPort = 80;
-  Serial.print("Updating Thingspeak ");
-  Serial.print(key);
+  Logger.print("Updating Thingspeak ");
+  Logger.print(key);
   
   if (client.connect("api.thingspeak.com", 80))
   {         
@@ -535,11 +606,11 @@ void updateThingspeak(float temperature, float humidity, int voltage, const char
     client.println();
     client.println();
     
-    Serial.println(" OK.");
+    Logger.println(" OK.");
   }
   else
   {
-    Serial.println(" Failed.");   
-    Serial.println();
+    Logger.println(" Failed.");   
+    Logger.println();
   }
 }

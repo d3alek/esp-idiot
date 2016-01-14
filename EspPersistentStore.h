@@ -1,3 +1,13 @@
+#define CONFIG_MAX_SIZE 200
+
+#define WIFI_NAME_OFFSET 100
+#define WIFI_PASSWORD_OFFSET 150
+#define CONFIG_OFFSET 200
+
+#define WIFI_NAME_STORED_BIT 1
+#define WIFI_PASSWORD_STORED_BIT 2
+#define CONFIG_STORED_BIT 3
+
 class EspPersistentStore {
   public:
       void begin();
@@ -9,8 +19,6 @@ class EspPersistentStore {
       void readConfig(char* config);
       bool wifiCredentialsStored();
       bool configStored();
-      void putWifiAttemptsFailed(int attempts);
-      int readWifiAttemptsFailed();
       void clear();
   private:
     void _putString(int startingOffset, const char* string);

@@ -2,16 +2,6 @@
 #include <Arduino.h>
 #include <EEPROM.h>
 
-
-#define WIFI_NAME_OFFSET 100
-#define WIFI_PASSWORD_OFFSET 150
-#define CONFIG_OFFSET 200
-
-#define WIFI_NAME_STORED_BIT 1
-#define WIFI_PASSWORD_STORED_BIT 2
-#define CONFIG_STORED_BIT 3
-#define WIFI_ATTEMPTS_BYTE 4
-
 bool began = false;
 
 void EspPersistentStore::begin() {
@@ -83,18 +73,6 @@ void EspPersistentStore::readConfig(char* config) {
   }
 
   _readString(CONFIG_OFFSET, config);
-}
-
-void EspPersistentStore::putWifiAttemptsFailed(int attempts) {
-  EEPROM.write(WIFI_ATTEMPTS_BYTE, attempts);
-  EEPROM.commit();
-}
-
-int EspPersistentStore::readWifiAttemptsFailed() {
-  if (!began) {
-    Serial.println("Begin should be called first");
-  }
-  return EEPROM.read(WIFI_ATTEMPTS_BYTE);
 }
 
 bool wifiNameStored() {
