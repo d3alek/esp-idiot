@@ -1,4 +1,4 @@
-#define VERSION 21
+#define VERSION 23.2
 
 #include <Arduino.h>
 
@@ -27,6 +27,8 @@ ADC_MODE(ADC_VCC);
 #define DEFAULT_SLEEP_SECONDS 60*15
 #define HARD_RESET_PIN 0
 #define BUILTIN_LED 2 // on my ESP-12s the blue led is connected to GPIO2 not GPIO1
+#define LOCAL_PUBLISH_FILE "localPublish.txt"
+#define MAX_STATE_JSON_LENGTH 300
 
 const int chipId = ESP.getChipId();
 
@@ -50,7 +52,8 @@ IPAddress netMsk(255, 255, 255, 0);
 // https://github.com/esp8266/Arduino/blob/master/doc/libraries.md#esp-specific-apis
 DHT dht(DHTPIN, chipId == DHT22_CHIP_ID ? DHT22 : DHT11); // ESP01 has a DHT22 attached, rest have a DHT11
 
-float humidity, temp_c;  // Values read from sensor
+float humidity = NAN, temp_c = NAN;  // Values read from sensor
+float voltage = NAN;
 
 // ThingSpeak Settings
 char thingspeakWriteApiKey[30];
@@ -59,22 +62,25 @@ int sleepSeconds = DEFAULT_SLEEP_SECONDS;
 int readSensorTries = 0;
 int maxReadSensorTries = 5;
 
-int voltage;
-
 char uuid[15];
 char updateTopic[20];
 char pingTopic[20];
 char pongTopic[20];
 bool configChanged = false;
+#define LOCAL_UPDATE_WAITS 5
+int localUpdateWaits = 0;
 
 #define FOREACH_STATE(STATE) \
         STATE(boot)   \
         STATE(setup_wifi)  \
         STATE(connect_to_wifi) \
         STATE(connect_to_mqtt) \
+        STATE(load_config) \
         STATE(update_config) \
+        STATE(local_update_config) \
         STATE(read_senses)   \
         STATE(publish) \
+        STATE(local_publish)  \
         STATE(ota_update)    \
         STATE(deep_sleep)  \
         STATE(hard_reset)  \
@@ -111,6 +117,7 @@ void restart() {
 
 void deepSleep(int seconds) {
   toState(deep_sleep);
+  Logger.flush();
   ESP.deepSleep(seconds*1000000, WAKE_RF_DEFAULT);
 }
 
@@ -152,6 +159,25 @@ void serveLogs() {
   if (sentSize != logFileSize) {
     Logger.println("Sent different data length than expected");
     Logger.print("Expected: "); Logger.println(logFileSize);
+    Logger.print("Actual: "); Logger.println(sentSize);
+  }
+}
+
+void serveLocalPublish() {
+  blink();
+  File localPublishFile = SPIFFS.open(LOCAL_PUBLISH_FILE, "r");
+  int fileSize = localPublishFile.size();
+  
+  server.sendHeader("Content-Length", String(fileSize));
+  server.sendHeader("Connection", "close");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/html", "");
+  WiFiClient client = server.client();
+
+  int sentSize = client.write(localPublishFile, HTTP_DOWNLOAD_UNIT_SIZE);
+  if (sentSize != fileSize) {
+    Logger.println("Sent different data length than expected");
+    Logger.print("Expected: "); Logger.println(fileSize);
     Logger.print("Actual: "); Logger.println(sentSize);
   }
 }
@@ -369,6 +395,7 @@ void startWifiCredentialsInputServer() {
     });
   server.on("/logs", serveLogs);
   server.on("/clear-logs", clearLogs);
+  server.on("/local-publish", serveLocalPublish);
   server.begin();
   blink();
 }
@@ -386,7 +413,8 @@ void startLocalControlServer() {
   Logger.println(myIP);
 
   server.on("/logs", serveLogs);
-  server.on("/clearLogs", clearLogs);
+  server.on("/clear-logs", clearLogs);
+  server.on("/local-publish", serveLocalPublish);
   server.begin();
 }
 
@@ -408,8 +436,9 @@ void loopResetButton() {
 
 void setup(void)
 {
+  SPIFFS.begin();
   Logger.begin(115200);
-  Logger.setDebugOutput(true);
+  Logger.setDebugOutput(true); 
   
   sprintf(uuid, "%s-%d", uuidPrefix, chipId);
   strcpy(thingspeakWriteApiKey, "");
@@ -430,10 +459,8 @@ void mqttLoop(int seconds) {
   }
 }
 
-void publishState() {
-  Logger.print("Publishing State: ");
-  const int maxLength = 300;
-  StaticJsonBuffer<maxLength> jsonBuffer;
+void buildStateString(char* stateJson) {
+  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
 
   JsonObject& root = jsonBuffer.createObject();
   JsonObject& stateObject = root.createNestedObject("state");
@@ -447,28 +474,25 @@ void publishState() {
 
   injectConfig(config);
   
-  if (state == publish) {
-    JsonObject& senses = reported.createNestedObject("senses");
-    if (!isnan(temp_c)) {
-      senses["temperature"] = temp_c;  
-    }
-    if (!isnan(humidity)) {
-      senses["humidity"] = humidity;
-    }
+  JsonObject& senses = reported.createNestedObject("senses");
+  
+  if (!isnan(temp_c)) {
+    senses["temperature"] = temp_c;  
+  }
+  if (!isnan(humidity)) {
+    senses["humidity"] = humidity;
+  }
+  if (!isnan(voltage)) {
     senses["voltage"] = voltage;
   }
-  
   int actualLength = root.measureLength();
-  if (actualLength >= maxLength) {
+  if (actualLength >= MAX_STATE_JSON_LENGTH) {
     Logger.println("!!! Resulting JSON is too long, expect errors");
   }
-  char value[maxLength];
-  root.printTo(value, maxLength);
-  char topic[30];
-  strcpy(topic,"things/");
-  strcat(topic,uuid);
-  mqttClient.publish(topic, value, true);
-  Logger.println(value);
+
+  root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
+  Logger.println(stateJson);
+  return;
 }
 
 void loop(void)
@@ -497,13 +521,14 @@ void loop(void)
     WiFi.mode(WIFI_AP_STA);
     WiFi.begin(wifiName, wifiPassword);
     int wifiConnectResult = WiFi.waitForConnectResult();
+    startLocalControlServer();
+    
     if (wifiConnectResult == WL_CONNECTED) {
       toState(connect_to_mqtt);
-      while (!mqttConnect()) { // TODO do not try infinitely
-        delay(1000);
-      }
     }
-    startLocalControlServer();
+    else {
+      toState(load_config);
+    }
     return;
   }
   
@@ -513,17 +538,24 @@ void loop(void)
     return;
   }
   else if (state == connect_to_mqtt) {
-    mqttLoop(2); // wait 2 seconds for update messages to go through
-    toState(update_config);
-  }
-  else if (state == update_config) {
-    if (PersistentStore.configStored()) {
-      char config[CONFIG_MAX_SIZE];
-      PersistentStore.readConfig(config);
-      if (config != NULL) {
-        loadConfig(config);
-      }
+    while (!mqttConnect()) { // TODO do not try infinitely
+      delay(1000);
     }
+    mqttLoop(2); // wait 2 seconds for update messages to go through
+    toState(load_config);
+  }
+  else if (state == load_config) {
+    char config[CONFIG_MAX_SIZE];
+    PersistentStore.readConfig(config);
+    loadConfig(config);
+    if (mqttClient.state() == MQTT_CONNECTED) {
+      toState(update_config);
+    }
+    else {
+      toState(local_update_config);
+    }
+  }
+  else if (state == update_config) { 
     publishState();
     mqttLoop(5); // wait 5 seconds for deltas to go through
     if (configChanged) {
@@ -532,13 +564,22 @@ void loop(void)
     }
     toState(read_senses);
   }
+  else if (state == local_update_config) {
+    if (localUpdateWaits++ < LOCAL_UPDATE_WAITS) {
+      delay(1000);
+      return;
+    }
+    else {
+      toState(read_senses);
+    }
+  }
   else if (state == read_senses) {
     if (!readTemperatureHumidity()) {
       delay(2000);
       return; //to repeat next loop
     }
     readInternalVoltage();
-    toState(publish);
+    toState(local_publish);
   }
   else if (state == publish) {
     publishState();
@@ -551,7 +592,30 @@ void loop(void)
   
     deepSleep(sleepSeconds);
   }
+  else if (state == local_publish) {
+    char state[MAX_STATE_JSON_LENGTH];
+    buildStateString(state);
+    File localPublishFile = SPIFFS.open(LOCAL_PUBLISH_FILE, "a+");
+    localPublishFile.println(state);
+    localPublishFile.close();
+    if (mqttClient.state() == MQTT_CONNECTED) {
+      toState(publish);
+    }
+    else {
+      deepSleep(sleepSeconds);
+    }
+  }
 } 
+
+void publishState() {
+    char state[MAX_STATE_JSON_LENGTH];
+    buildStateString(state);
+    char topic[30];
+    constructTopicName(topic, "things/");
+    Logger.print("Publishing State to ");
+    Logger.println(topic);
+    mqttClient.publish(topic, state, true);
+}
 
 void readInternalVoltage() {
   voltage = ESP.getVcc();

@@ -6,7 +6,6 @@
 
 #define WIFI_NAME_STORED_BIT 1
 #define WIFI_PASSWORD_STORED_BIT 2
-#define CONFIG_STORED_BIT 3
 
 class EspPersistentStore {
   public:
@@ -18,11 +17,11 @@ class EspPersistentStore {
       void readWifiPassword(char* wifiPassword);
       void readConfig(char* config);
       bool wifiCredentialsStored();
-      bool configStored();
       void clear();
   private:
     void _putString(int startingOffset, const char* string);
     void _readString(int startingOffset, char* string);
+    void _readString(int startingOffset, char* string, int maxSize);
 };
 
 extern EspPersistentStore PersistentStore;

@@ -15,7 +15,6 @@ void EspPersistentStore::clear() {
   }
   EEPROM.write(WIFI_NAME_STORED_BIT, 0);
   EEPROM.write(WIFI_PASSWORD_STORED_BIT, 0);
-  EEPROM.write(CONFIG_STORED_BIT, 0);
   EEPROM.commit();
 }
 
@@ -41,6 +40,16 @@ void EspPersistentStore::_readString(int startingOffset, char* string) {
   } while (string[i++] != '\0');
 }
 
+void EspPersistentStore::_readString(int startingOffset, char* string, int maxSize) {
+  if (!began) {
+    Serial.println("Begin should be called first");
+  }
+  int i = 0;
+  do {
+    string[i] = EEPROM.read(startingOffset + i);
+  } while (string[i++] != '\0' && i < maxSize);
+}
+
 void EspPersistentStore::putWifiPassword(const char* password) {
   _putString(WIFI_PASSWORD_OFFSET, password);
   EEPROM.write(WIFI_PASSWORD_STORED_BIT, 1);
@@ -55,24 +64,11 @@ void EspPersistentStore::putWifiName(const char* name) {
 
 void EspPersistentStore::putConfig(const char* config) {
   _putString(CONFIG_OFFSET, config);
-  EEPROM.write(CONFIG_STORED_BIT, 1);
   EEPROM.commit();
 }
 
-bool EspPersistentStore::configStored() {
-  if (!began) {
-    Serial.println("Begin should be called first");
-  }
-  return EEPROM.read(CONFIG_STORED_BIT);
-}
-
 void EspPersistentStore::readConfig(char* config) {
-  if (!configStored()) {
-    Serial.println("Could not read config because none stored");
-    config = NULL;
-  }
-
-  _readString(CONFIG_OFFSET, config);
+  _readString(CONFIG_OFFSET, config, CONFIG_MAX_SIZE);
 }
 
 bool wifiNameStored() {
