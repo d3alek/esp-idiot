@@ -1,4 +1,4 @@
-#define VERSION 23.2
+#define VERSION 24.2
 
 #include <Arduino.h>
 
@@ -29,6 +29,8 @@ ADC_MODE(ADC_VCC);
 #define BUILTIN_LED 2 // on my ESP-12s the blue led is connected to GPIO2 not GPIO1
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
 #define MAX_STATE_JSON_LENGTH 300
+#define MAX_MQTT_CONNECT_ATTEMPTS 3
+#define MAX_WIFI_CONNECTED_ATTEMPTS 3
 
 const int chipId = ESP.getChipId();
 
@@ -69,12 +71,15 @@ char pongTopic[20];
 bool configChanged = false;
 #define LOCAL_UPDATE_WAITS 5
 int localUpdateWaits = 0;
+int mqttConnectAttempts = 0;
+int wifiConnectAttempts = 0;
 
 #define FOREACH_STATE(STATE) \
         STATE(boot)   \
         STATE(setup_wifi)  \
         STATE(connect_to_wifi) \
         STATE(connect_to_mqtt) \
+        STATE(serve_locally) \
         STATE(load_config) \
         STATE(update_config) \
         STATE(local_update_config) \
@@ -341,6 +346,45 @@ void clearLogs() {
   }
 }
 
+void httpUpdateAnswer() {  
+  blink();
+  server.sendHeader("Connection", "close");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
+  restart();
+}
+
+void httpUpdateDo() {
+  blink();
+  HTTPUpload& upload = server.upload();
+  if(upload.status == UPLOAD_FILE_START){
+    WiFiUDP::stopAll();
+    
+    uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+    if(!Update.begin(maxSketchSpace)){//start with max available size
+      Update.printError(Logger);
+    }
+  } else if(upload.status == UPLOAD_FILE_WRITE){
+    if(Update.write(upload.buf, upload.currentSize) != upload.currentSize){
+      Update.printError(Logger);
+    }
+  } else if(upload.status == UPLOAD_FILE_END){
+    if(Update.end(true)){ //true to set the size to the current progress
+      // update success
+    } else {
+      Update.printError(Logger);
+    }
+  }
+  yield();
+}
+
+void httpUpdateGet() {
+  blink();
+  server.sendHeader("Connection", "close");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/html", updateIndex);
+}
+
 void startWifiCredentialsInputServer() {
   Logger.println("Configuring access point...");
   delay(1000);
@@ -356,43 +400,8 @@ void startWifiCredentialsInputServer() {
 
   server.on("/", handleRoot);
   server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
-  server.on("/update", HTTP_GET, [](){
-      blink();
-      server.sendHeader("Connection", "close");
-      server.sendHeader("Access-Control-Allow-Origin", "*");
-      server.send(200, "text/html", updateIndex);
-    });
-  server.on("/update", HTTP_POST, [](){
-      blink();
-      server.sendHeader("Connection", "close");
-      server.sendHeader("Access-Control-Allow-Origin", "*");
-      server.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
-      restart();
-    },[](){
-      blink();
-      HTTPUpload& upload = server.upload();
-      if(upload.status == UPLOAD_FILE_START){
-        Logger.setDebugOutput(true);
-        WiFiUDP::stopAll();
-        
-        uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
-        if(!Update.begin(maxSketchSpace)){//start with max available size
-          Update.printError(Logger);
-        }
-      } else if(upload.status == UPLOAD_FILE_WRITE){
-        if(Update.write(upload.buf, upload.currentSize) != upload.currentSize){
-          Update.printError(Logger);
-        }
-      } else if(upload.status == UPLOAD_FILE_END){
-        if(Update.end(true)){ //true to set the size to the current progress
-          // update success
-        } else {
-          Update.printError(Logger);
-        }
-        Logger.setDebugOutput(false);
-      }
-      yield();
-    });
+  server.on("/update", HTTP_GET, httpUpdateGet);
+  server.on("/update", HTTP_POST, httpUpdateAnswer, httpUpdateDo);
   server.on("/logs", serveLogs);
   server.on("/clear-logs", clearLogs);
   server.on("/local-publish", serveLocalPublish);
@@ -415,6 +424,9 @@ void startLocalControlServer() {
   server.on("/logs", serveLogs);
   server.on("/clear-logs", clearLogs);
   server.on("/local-publish", serveLocalPublish);
+  server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
+  server.on("/update", HTTP_GET, httpUpdateGet);
+  server.on("/update", HTTP_POST, httpUpdateAnswer, httpUpdateDo);
   server.begin();
 }
 
@@ -444,11 +456,15 @@ void setup(void)
   strcpy(thingspeakWriteApiKey, "");
   Logger.print("UUID: ");
   Logger.println(uuid);
-  
+  Logger.print("VERSION: ");
+  Logger.println(VERSION);
+
   dht.begin();
 
   PersistentStore.begin();
   setupResetButton();
+  
+  WiFi.mode(WIFI_AP_STA);
 }
 
 void mqttLoop(int seconds) {
@@ -518,17 +534,33 @@ void loop(void)
     PersistentStore.readWifiPassword(wifiPassword);
     Logger.println(wifiPassword);
     
-    WiFi.mode(WIFI_AP_STA);
     WiFi.begin(wifiName, wifiPassword);
     int wifiConnectResult = WiFi.waitForConnectResult();
-    startLocalControlServer();
     
     if (wifiConnectResult == WL_CONNECTED) {
       toState(connect_to_mqtt);
     }
     else {
-      toState(load_config);
+      if (wifiConnectAttempts++ < MAX_WIFI_CONNECTED_ATTEMPTS) {
+        delay(1000);
+      }
+      else {
+        toState(serve_locally); 
+      }      
     }
+    return;
+  }
+  else if (state == connect_to_mqtt) {
+    while (mqttConnectAttempts++ < MAX_MQTT_CONNECT_ATTEMPTS && !mqttConnect()) { 
+      delay(1000);
+    }
+    mqttLoop(2); // wait 2 seconds for update messages to go through
+    toState(serve_locally);
+    return;
+  }
+  else if (state == serve_locally) {
+    startLocalControlServer();
+    toState(load_config);
     return;
   }
   
@@ -536,13 +568,6 @@ void loop(void)
   
   if (state == setup_wifi) {
     return;
-  }
-  else if (state == connect_to_mqtt) {
-    while (!mqttConnect()) { // TODO do not try infinitely
-      delay(1000);
-    }
-    mqttLoop(2); // wait 2 seconds for update messages to go through
-    toState(load_config);
   }
   else if (state == load_config) {
     char config[CONFIG_MAX_SIZE];
