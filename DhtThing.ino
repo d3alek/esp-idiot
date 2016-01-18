@@ -1,4 +1,4 @@
-#define VERSION 25.17
+#define VERSION 26
 
 #include <Arduino.h>
 
@@ -130,7 +130,7 @@ void restart() {
 
 void deepSleep(int seconds) {
   clientWaitStartedTime = millis();
-  while (server.client()) {
+  while (server.client() && clientWaitStartedTime + 5000 > millis()) {
     toState(client_wait);
     yield();
   }
@@ -386,6 +386,13 @@ void httpUpdateDo() {
   yield();
 }
 
+void format() {
+  SPIFFS.format();
+  server.sendHeader("Connection", "close");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/html", "OK");
+}
+
 void httpUpdateGet() {
   blink();
   server.sendHeader("Connection", "close");
@@ -407,6 +414,7 @@ void startWifiCredentialsInputServer() {
   Logger.println(myIP);
 
   server.on("/", handleRoot);
+  server.on("/format", format);
   server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
   server.on("/update", HTTP_GET, httpUpdateGet);
   server.on("/update", HTTP_POST, httpUpdateAnswer, httpUpdateDo);
@@ -429,6 +437,7 @@ void startLocalControlServer() {
   Logger.println(myIP);
 
   server.on("/logs", serveLogs);
+  server.on("/format", format);
   server.on("/local-publish", serveLocalPublish);
   server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
   server.on("/update", HTTP_GET, httpUpdateGet);
@@ -586,6 +595,7 @@ void loop(void)
   else if (state == load_config) {
     char config[CONFIG_MAX_SIZE];
     PersistentStore.readConfig(config);
+    yield();
     loadConfig(config);
     if (mqttClient.state() == MQTT_CONNECTED) {
       toState(update_config);
@@ -599,6 +609,7 @@ void loop(void)
     mqttLoop(5); // wait 5 seconds for deltas to go through
     if (configChanged) {
       saveConfig();
+      yield();
       publishState();
     }
     toState(read_senses);
@@ -617,11 +628,13 @@ void loop(void)
       delay(2000);
       return; //to repeat next loop
     }
+    yield();
     readInternalVoltage();
     toState(local_publish);
   }
   else if (state == publish) {
     publishState();
+    yield();
     if (strlen(thingspeakWriteApiKey) > 0) {
       updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
     }
@@ -632,12 +645,14 @@ void loop(void)
     deepSleep(sleepSeconds);
   }
   else if (state == local_publish) {
-//    char state[MAX_STATE_JSON_LENGTH];
-//    buildStateString(state);
-//    SizeLimitedFileAppender localPublishFile;
-//    localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES);
-//    localPublishFile.println(state);
-//    localPublishFile.close();
+    char state[MAX_STATE_JSON_LENGTH];
+    buildStateString(state);
+    yield();
+    SizeLimitedFileAppender localPublishFile;
+    localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES);
+    localPublishFile.println(state);
+    yield();
+    localPublishFile.close();
     if (mqttClient.state() == MQTT_CONNECTED) {
       toState(publish);
     }
