@@ -1,4 +1,4 @@
-#define VERSION 24.2
+#define VERSION 24.4
 
 #include <Arduino.h>
 
@@ -88,6 +88,7 @@ int wifiConnectAttempts = 0;
         STATE(local_publish)  \
         STATE(ota_update)    \
         STATE(deep_sleep)  \
+        STATE(client_wait) \
         STATE(hard_reset)  \
 
 #define GENERATE_ENUM(ENUM) ENUM,
@@ -106,6 +107,9 @@ int state = boot;
 IdiotLogger Logger;
 
 void toState(int newState) {
+  if (state == newState) {
+    return;
+  }
   Logger.println();
   Logger.print("[");
   Logger.print(STATE_STRING[state]);
@@ -121,6 +125,10 @@ void restart() {
 }
 
 void deepSleep(int seconds) {
+  while (server.client()) {
+    toState(client_wait);
+    yield();
+  }
   toState(deep_sleep);
   Logger.flush();
   ESP.deepSleep(seconds*1000000, WAKE_RF_DEFAULT);
