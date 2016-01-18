@@ -2,18 +2,19 @@
 #define IdiotLogger_h
 
 #define LOG_FILE "logFile.txt"
-
+#define MAX_LOG_FILE_SIZE 300000 // 300kb
 #include "Arduino.h"
 #include <FS.h>
+#include "SizeLimitedFileAppender.h"
 
 // following the example of https://code.google.com/p/arduino/source/browse/trunk/hardware/arduino/cores/arduino/HardwareSerial.h?r=982
 class IdiotLogger : public Stream {
   public:
     IdiotLogger();
+    ~IdiotLogger();
     void setDebugOutput(bool);
     void begin(long);
-    File getLogFile();
-    bool clearFile();
+    void close();
     virtual size_t write(uint8_t);
     virtual int available();
     virtual int read();
@@ -21,7 +22,7 @@ class IdiotLogger : public Stream {
     virtual void flush();
     using Print::write;
   private:
-    File _logFile;
+    SizeLimitedFileAppender _logFile;
 };
 
 #endif

@@ -1,4 +1,4 @@
-#define VERSION 24.4
+#define VERSION 25.17
 
 #include <Arduino.h>
 
@@ -20,6 +20,8 @@
 
 #include "IdiotLogger.h"
 
+#include "SizeLimitedFileAppender.h"
+
 ADC_MODE(ADC_VCC);
 
 #define DHT22_CHIP_ID 320929
@@ -31,6 +33,8 @@ ADC_MODE(ADC_VCC);
 #define MAX_STATE_JSON_LENGTH 300
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
+
+#define MAX_LOCAL_PUBLISH_FILE_BYTES 300000 // 300kb
 
 const int chipId = ESP.getChipId();
 
@@ -73,6 +77,7 @@ bool configChanged = false;
 int localUpdateWaits = 0;
 int mqttConnectAttempts = 0;
 int wifiConnectAttempts = 0;
+long clientWaitStartedTime;
 
 #define FOREACH_STATE(STATE) \
         STATE(boot)   \
@@ -93,7 +98,6 @@ int wifiConnectAttempts = 0;
 
 #define GENERATE_ENUM(ENUM) ENUM,
 #define GENERATE_STRING(STRING) #STRING,
-
 typedef enum {
     FOREACH_STATE(GENERATE_ENUM)
 } state_enum;
@@ -125,12 +129,14 @@ void restart() {
 }
 
 void deepSleep(int seconds) {
+  clientWaitStartedTime = millis();
   while (server.client()) {
     toState(client_wait);
     yield();
   }
   toState(deep_sleep);
   Logger.flush();
+  Logger.close();
   ESP.deepSleep(seconds*1000000, WAKE_RF_DEFAULT);
 }
 
@@ -158,7 +164,8 @@ void handleRoot() {
 
 void serveLogs() {
   blink();
-  File logFile = Logger.getLogFile();
+  Logger.close();
+  File logFile = SPIFFS.open(LOG_FILE, "r");
   int logFileSize = logFile.size();
   logFile.flush();
   logFile.seek(0, SeekSet);
@@ -169,6 +176,9 @@ void serveLogs() {
   WiFiClient client = server.client();
 
   int sentSize = client.write(logFile, HTTP_DOWNLOAD_UNIT_SIZE);
+  
+  logFile.close();
+  Logger.begin(115200);
   if (sentSize != logFileSize) {
     Logger.println("Sent different data length than expected");
     Logger.print("Expected: "); Logger.println(logFileSize);
@@ -344,16 +354,6 @@ void turnLedOff() {
   digitalWrite(BUILTIN_LED, HIGH);
 }
 
-void clearLogs() {
-  if (Logger.clearFile()) {
-    Logger.println("Logs cleared.");
-    server.send(200, "text/plain", "Success");
-  }
-  else {
-    server.send(200, "text/plain", "Failure");
-  }
-}
-
 void httpUpdateAnswer() {  
   blink();
   server.sendHeader("Connection", "close");
@@ -411,7 +411,6 @@ void startWifiCredentialsInputServer() {
   server.on("/update", HTTP_GET, httpUpdateGet);
   server.on("/update", HTTP_POST, httpUpdateAnswer, httpUpdateDo);
   server.on("/logs", serveLogs);
-  server.on("/clear-logs", clearLogs);
   server.on("/local-publish", serveLocalPublish);
   server.begin();
   blink();
@@ -430,7 +429,6 @@ void startLocalControlServer() {
   Logger.println(myIP);
 
   server.on("/logs", serveLogs);
-  server.on("/clear-logs", clearLogs);
   server.on("/local-publish", serveLocalPublish);
   server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
   server.on("/update", HTTP_GET, httpUpdateGet);
@@ -466,6 +464,14 @@ void setup(void)
   Logger.println(uuid);
   Logger.print("VERSION: ");
   Logger.println(VERSION);
+  Logger.println("FS info:");
+  FSInfo fsInfo;
+  SPIFFS.info(fsInfo);
+
+  Logger.print("Used bytes: ");
+  Logger.println(fsInfo.usedBytes);
+  Logger.print(" Total bytes: ");
+  Logger.println(fsInfo.totalBytes); 
 
   dht.begin();
 
@@ -626,11 +632,12 @@ void loop(void)
     deepSleep(sleepSeconds);
   }
   else if (state == local_publish) {
-    char state[MAX_STATE_JSON_LENGTH];
-    buildStateString(state);
-    File localPublishFile = SPIFFS.open(LOCAL_PUBLISH_FILE, "a+");
-    localPublishFile.println(state);
-    localPublishFile.close();
+//    char state[MAX_STATE_JSON_LENGTH];
+//    buildStateString(state);
+//    SizeLimitedFileAppender localPublishFile;
+//    localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES);
+//    localPublishFile.println(state);
+//    localPublishFile.close();
     if (mqttClient.state() == MQTT_CONNECTED) {
       toState(publish);
     }

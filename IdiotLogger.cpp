@@ -10,15 +10,15 @@ void IdiotLogger::setDebugOutput(bool debugOutput) {
 void IdiotLogger::begin(long baud) {
   Serial.begin(baud);
   Serial.println();
-  _logFile = SPIFFS.open(LOG_FILE, "a+"); // make sure SPIFFS.begin() is called before that.
-  if (!_logFile) {
+  _logFile.open(LOG_FILE, MAX_LOG_FILE_SIZE); // make sure SPIFFS.begin() is called before that.
+  if (!_logFile.valid()) {
     Serial.println("IdiotLogger: no valid log file specified. Logging only to Serial.");
   }
 }
 
 size_t IdiotLogger::write(uint8_t c) {
   Serial.write(c);
-  if (_logFile) {
+  if (_logFile.valid()) {
     _logFile.write(c);
   }
 }
@@ -38,21 +38,18 @@ int IdiotLogger::peek() {
 
 void IdiotLogger::flush() {
   Serial.flush();
-  if (_logFile) {
+  if (_logFile.valid()) {
     _logFile.flush();
   }
 }
 
-File IdiotLogger::getLogFile() {
-  return _logFile;
+void IdiotLogger::close() {
+  if (_logFile.valid()) {
+    _logFile.close();  
+  }
 }
 
-bool IdiotLogger::clearFile() {
-  _logFile.close();
-  SPIFFS.remove(LOG_FILE);
-  _logFile = SPIFFS.open(LOG_FILE, "a+");
-  if (!_logFile) {
-    Serial.println("IdiotLogger: no valid log file specified. Logging only to Serial.");
-  }
+IdiotLogger::~IdiotLogger() {
+  close();
 }
 
