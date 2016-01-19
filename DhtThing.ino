@@ -1,4 +1,4 @@
-#define VERSION 26
+#define VERSION 27.23
 
 #include <Arduino.h>
 
@@ -22,6 +22,8 @@
 
 #include "SizeLimitedFileAppender.h"
 
+#include "GPIO.h"
+
 ADC_MODE(ADC_VCC);
 
 #define DHT22_CHIP_ID 320929
@@ -35,6 +37,10 @@ ADC_MODE(ADC_VCC);
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
 
 #define MAX_LOCAL_PUBLISH_FILE_BYTES 300000 // 300kb
+
+#define MAX_READ_SENSORS_RESULT_SIZE 300
+
+#define ELEVEN_DASHES "-----------"
 
 const int chipId = ESP.getChipId();
 
@@ -53,23 +59,13 @@ PubSubClient mqttClient(wclient);
 IPAddress apIP(192, 168, 1, 1);
 IPAddress netMsk(255, 255, 255, 0);
 
-// Initialize DHT sensor 
-// Using suggested method in
-// https://github.com/esp8266/Arduino/blob/master/doc/libraries.md#esp-specific-apis
-DHT dht(DHTPIN, chipId == DHT22_CHIP_ID ? DHT22 : DHT11); // ESP01 has a DHT22 attached, rest have a DHT11
-
-float humidity = NAN, temp_c = NAN;  // Values read from sensor
 float voltage = NAN;
 
-// ThingSpeak Settings
-char thingspeakWriteApiKey[30];
 int sleepSeconds = DEFAULT_SLEEP_SECONDS;
-
-int readSensorTries = 0;
-int maxReadSensorTries = 5;
 
 char uuid[15];
 char updateTopic[20];
+char updateResultTopic[30];
 char pingTopic[20];
 char pongTopic[20];
 bool configChanged = false;
@@ -88,7 +84,8 @@ long clientWaitStartedTime;
         STATE(load_config) \
         STATE(update_config) \
         STATE(local_update_config) \
-        STATE(read_senses)   \
+        STATE(process_gpio) \
+        STATE(read_sensors) \
         STATE(publish) \
         STATE(local_publish)  \
         STATE(ota_update)    \
@@ -109,6 +106,18 @@ static const char *STATE_STRING[] = {
 int state = boot;
 
 IdiotLogger Logger;
+
+char mode[12];
+char value[12];
+
+// devices
+
+int dht11Pin = -1;
+int dht22Pin = -1;
+char readSensorsResult[MAX_READ_SENSORS_RESULT_SIZE];
+
+
+char finalState[MAX_STATE_JSON_LENGTH];
 
 void toState(int newState) {
   if (state == newState) {
@@ -244,43 +253,6 @@ const char* updateFromS3(char* updatePath) {
   return "HTTP_UPDATE_UNKNOWN_RETURN_CODE";
 }
 
-void loadConfig(char* string) {
-    StaticJsonBuffer<300> jsonBuffer;
-    JsonObject& root = jsonBuffer.parseObject(string);
-    if (!root.success()) {
-      Logger.print("Could not parse JSON from config string: ");
-      Logger.println(string);
-      return;
-    }
-    JsonObject& config = root["state"]["config"];
-    if (config.containsKey("thingspeak")) {
-      strcpy(thingspeakWriteApiKey, config["thingspeak"]);
-    }
-    if (config.containsKey("sleep")) {
-      sleepSeconds = atoi(config["sleep"]);
-    }
-}
-
-void injectConfig(JsonObject& config) {
-  config["sleep"] = sleepSeconds;
-  if (strlen(thingspeakWriteApiKey) > 0) {
-    config["thingspeak"] = thingspeakWriteApiKey;
-  }
-}
-
-void saveConfig() {
-  StaticJsonBuffer<200> jsonBuffer;
-  JsonObject& root = jsonBuffer.createObject();
-  JsonObject& stateObject = root.createNestedObject("state");
-  JsonObject& config = stateObject.createNestedObject("config");
-
-  injectConfig(config);
-
-  char configString[200];
-  root.printTo(configString, 200);
-  PersistentStore.putConfig(configString);
-}
-
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Logger.print("Message arrived [");
   Logger.print(topic);
@@ -291,9 +263,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   normalizedPayload[length]='\0';
   Logger.println(normalizedPayload);
-  char updateResultTopic[50];
-  strcpy(updateResultTopic, updateTopic);
-  strcat(updateResultTopic,"/result");
   if (strcmp(topic, updateTopic) == 0) {
     unsigned char emptyMessage[0];
     mqttClient.publish(updateTopic, emptyMessage, 0, true);
@@ -325,6 +294,9 @@ bool mqttConnect() {
     strcat(deltaTopic, "/delta");
     constructTopicName(pingTopic, "ping/");
     constructTopicName(pongTopic, "pong/");
+
+    strcpy(updateResultTopic, updateTopic);
+    strcat(updateResultTopic,"/result");
     
     sleepSeconds = DEFAULT_SLEEP_SECONDS;
     mqttClient.subscribe(updateTopic);
@@ -468,7 +440,6 @@ void setup(void)
   Logger.setDebugOutput(true); 
   
   sprintf(uuid, "%s-%d", uuidPrefix, chipId);
-  strcpy(thingspeakWriteApiKey, "");
   Logger.print("UUID: ");
   Logger.println(uuid);
   Logger.print("VERSION: ");
@@ -482,8 +453,10 @@ void setup(void)
   Logger.print(" Total bytes: ");
   Logger.println(fsInfo.totalBytes); 
 
-  dht.begin();
-
+  // GPIO init
+  strcpy(mode, ELEVEN_DASHES);
+  strcpy(value, ELEVEN_DASHES);
+  
   PersistentStore.begin();
   setupResetButton();
   
@@ -496,42 +469,6 @@ void mqttLoop(int seconds) {
     mqttClient.loop();
     delay(100); 
   }
-}
-
-void buildStateString(char* stateJson) {
-  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
-
-  JsonObject& root = jsonBuffer.createObject();
-  JsonObject& stateObject = root.createNestedObject("state");
-  JsonObject& reported = stateObject.createNestedObject("reported");
-
-  reported["version"] = VERSION;
-  reported["wifi"] = WiFi.SSID().c_str();
-  reported["state"] = STATE_STRING[state];
-
-  JsonObject& config = reported.createNestedObject("config");
-
-  injectConfig(config);
-  
-  JsonObject& senses = reported.createNestedObject("senses");
-  
-  if (!isnan(temp_c)) {
-    senses["temperature"] = temp_c;  
-  }
-  if (!isnan(humidity)) {
-    senses["humidity"] = humidity;
-  }
-  if (!isnan(voltage)) {
-    senses["voltage"] = voltage;
-  }
-  int actualLength = root.measureLength();
-  if (actualLength >= MAX_STATE_JSON_LENGTH) {
-    Logger.println("!!! Resulting JSON is too long, expect errors");
-  }
-
-  root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
-  Logger.println(stateJson);
-  return;
 }
 
 void loop(void)
@@ -612,7 +549,7 @@ void loop(void)
       yield();
       publishState();
     }
-    toState(read_senses);
+    toState(process_gpio);
   }
   else if (state == local_update_config) {
     if (localUpdateWaits++ < LOCAL_UPDATE_WAITS) {
@@ -620,37 +557,77 @@ void loop(void)
       return;
     }
     else {
-      toState(read_senses);
+      toState(process_gpio);
     }
   }
-  else if (state == read_senses) {
-    if (!readTemperatureHumidity()) {
-      delay(2000);
-      return; //to repeat next loop
+  else if (state == process_gpio) {
+    for (int i = gpio0 ; i  < gpio16 ; ++i) {
+      int gpioNumber = GPIO_NUMBER[i];
+      if (mode[i] == 'i') {
+        pinMode(gpioNumber, INPUT);
+        value[i] = digitalRead(gpioNumber) == HIGH ? 'h' : 'l';
+        Logger.print("INPUT GPIO");
+        Logger.print(gpioNumber);
+        Logger.print(" ");
+        Logger.println(value[i]);
+      }
+      else if (mode[i] == 'o') {
+        pinMode(gpioNumber, OUTPUT);
+        digitalWrite(gpioNumber, value[i] == 'h' ? HIGH : LOW);
+        Logger.print("OUTPUT GPIO");
+        Logger.print(gpioNumber);
+        Logger.print(" ");
+        Logger.println(value[i]);
+      }
     }
-    yield();
-    readInternalVoltage();
-    toState(local_publish);
+    delay(1000); // artificial delay to see effect
+    toState(read_sensors);
   }
-  else if (state == publish) {
-    publishState();
-    yield();
-    if (strlen(thingspeakWriteApiKey) > 0) {
-      updateThingspeak(temp_c, humidity, voltage, thingspeakWriteApiKey);
+  else if (state == read_sensors) {
+    
+    StaticJsonBuffer<MAX_READ_SENSORS_RESULT_SIZE> jsonBuffer;
+    JsonObject& sensors = jsonBuffer.createObject();
+    
+    if (dht11Pin != -1) {
+      JsonObject& dht11Json = sensors.createNestedObject("DHT11");
+      DHT dht11(dht11Pin, DHT11);
+      dht11.begin();
+      int attempts = 0;
+      Serial.print("Reading DHT11 from pin ");
+      Serial.println(dht11Pin);
+      while (!readTemperatureHumidity(dht11, dht11Json) && attempts < 5) {
+        delay(2000);
+        attempts++;
+      }
     }
     
-    unsigned long awakeMillis = millis();
-    Logger.println(awakeMillis);
-  
-    deepSleep(sleepSeconds);
+    if (dht22Pin != -1) {
+      JsonObject& dht22Json = sensors.createNestedObject("DHT22");
+      DHT dht22(dht22Pin, DHT22);
+      dht22.begin();
+      int attempts = 0;
+      Serial.print("Reading DHT22 from pin ");
+      Serial.println(dht22Pin);
+      while (!readTemperatureHumidity(dht22, dht22Json) && attempts < 5) {
+        delay(2000);
+        attempts++;
+      }
+    }
+
+    sensors.printTo(readSensorsResult, MAX_READ_SENSORS_RESULT_SIZE);
+    Logger.print("readSensorsResult: ");
+    Logger.println(readSensorsResult);
+
+    readInternalVoltage();
+    
+    toState(local_publish);
   }
   else if (state == local_publish) {
-    char state[MAX_STATE_JSON_LENGTH];
-    buildStateString(state);
+    buildStateString(finalState);
     yield();
     SizeLimitedFileAppender localPublishFile;
     localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES);
-    localPublishFile.println(state);
+    localPublishFile.println(finalState);
     yield();
     localPublishFile.close();
     if (mqttClient.state() == MQTT_CONNECTED) {
@@ -660,16 +637,29 @@ void loop(void)
       deepSleep(sleepSeconds);
     }
   }
-} 
-
-void publishState() {
-    char state[MAX_STATE_JSON_LENGTH];
-    buildStateString(state);
+  else if (state == publish) {
     char topic[30];
     constructTopicName(topic, "things/");
     Logger.print("Publishing State to ");
     Logger.println(topic);
-    mqttClient.publish(topic, state, true);
+    mqttClient.publish(topic, finalState, true);
+    yield();
+    
+    unsigned long awakeMillis = millis();
+    Logger.println(awakeMillis);
+  
+    deepSleep(sleepSeconds);
+  }
+} 
+
+void publishState() {
+  char state[MAX_STATE_JSON_LENGTH];
+  buildStateString(state);
+  char topic[30];
+  constructTopicName(topic, "things/");
+  Logger.print("Publishing State to ");
+  Logger.println(topic);
+  mqttClient.publish(topic, state, true);
 }
 
 void readInternalVoltage() {
@@ -678,58 +668,130 @@ void readInternalVoltage() {
   Logger.println(voltage);
 }
 
-bool readTemperatureHumidity() {
-    Logger.print("DHT ");
+bool readTemperatureHumidity(DHT dht, JsonObject& jsonObject) {
+  Logger.print("DHT ");
+  
+  float temp_c, humidity;
+  
+  humidity = dht.readHumidity();          // Read humidity (percent)
+  temp_c = dht.readTemperature(false);     // Read temperature as Celsius
+  if (isnan(humidity) || isnan(temp_c)) {
+    Logger.print("fail ");
+    return false;
+  }
+  else {
+    Logger.println("OK");
+    Logger.print("Temperature: ");
+    Logger.println(temp_c);
+    Logger.print("Humidity: ");
+    Logger.println(humidity);
+    jsonObject["t"] = temp_c;
+    jsonObject["h"] = humidity;
     
-    ++readSensorTries;
-    humidity = dht.readHumidity();          // Read humidity (percent)
-    temp_c = dht.readTemperature(false);     // Read temperature as Celsius
-    if (isnan(humidity) || isnan(temp_c)) {
-      Logger.print(readSensorTries);
-      Logger.print(" ");
-      if (readSensorTries <= maxReadSensorTries) {
-        return false;
-      }
-      else {
-        Logger.println("Giving up.");
-        return true;
-      }
-    }
-    else {
-      Logger.println("OK");
-      Logger.print("Temperature: ");
-      Logger.println(temp_c);
-      Logger.print("Humidity: ");
-      Logger.println(humidity);
-    }
-
     return true;
+  }
 }
 
-void updateThingspeak(float temperature, float humidity, int voltage, const char* key)
-{
-  WiFiClient client;
-  const int httpPort = 80;
-  Logger.print("Updating Thingspeak ");
-  Logger.print(key);
+void loadConfig(char* string) {
+  StaticJsonBuffer<400> jsonBuffer;
+  JsonObject& root = jsonBuffer.parseObject(string);
+  if (!root.success()) {
+    Logger.print("Could not parse JSON from config string: ");
+    Logger.println(string);
+    return;
+  }
+  JsonObject& config = root["state"]["config"];
   
-  if (client.connect("api.thingspeak.com", 80))
-  {         
-    client.print("GET ");
-    client.print("/update?api_key=");
-    client.print(key);
-    client.print("&field1="+String(temperature));
-    client.print("&field2="+String(humidity));
-    client.print("&field3="+String(voltage));
-    client.print(" HTTP/1.0");
-    client.println();
-    client.println();
+  if (config.containsKey("sleep")) {
+    sleepSeconds = atoi(config["sleep"]);
+  }
+  if (config.containsKey("gpio")) {
+    JsonObject& gpio = config["gpio"];
+    if (gpio.containsKey("mode")) {
+      strcpy(mode, gpio["mode"]);
+    }
+    if (gpio.containsKey("value")) {
+      strcpy(value, gpio["value"]);
+    }
+    int modeSize = strlen(mode);
+    char pinBuffer[3];
+    for (int i = 0; i < modeSize; ++i) {
+      int gpioNumber = GPIO_NUMBER[i];
+      if (mode[i] == 's') {
+        itoa(gpioNumber,pinBuffer,10);
+        if (gpio.containsKey(pinBuffer)) {
+          makeDevicePinPairing(gpioNumber, gpio[pinBuffer].asString());
+        }
+      }
+    }
+  }
+}
+
+// make sure this is synced with injectConfig
+void makeDevicePinPairing(int pinNumber, const char* device) {
+  if (strcmp(device, "DHT11") == 0) {
+    dht11Pin = pinNumber;
+  }
+  else if (strcmp(device, "DHT22") == 0) {
+    dht22Pin = pinNumber;
+  }
+}
+
+// make sure this is synced with makeDevicePinPairing
+void injectConfig(JsonObject& config) {
+  config["sleep"] = sleepSeconds;
+  
+  JsonObject& gpio = config.createNestedObject("gpio");
+  gpio["mode"] = mode;
+  gpio["value"] = value;
+  if (dht11Pin != -1) {
+    gpio.set(String(dht11Pin), "DHT11"); // this string conversion is necessary because otherwise ArduinoJson corrupts the key
+  }
+  if (dht22Pin != -1) {
+    gpio.set(String(dht22Pin), "DHT22");
+  }
+}
+
+void saveConfig() {
+  StaticJsonBuffer<300> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  JsonObject& stateObject = root.createNestedObject("state");
+  JsonObject& config = stateObject.createNestedObject("config");
+
+  injectConfig(config);
+
+  char configString[300];
+  root.printTo(configString, 300);
+  PersistentStore.putConfig(configString);
+}
+
+void buildStateString(char* stateJson) {
+  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
+
+  JsonObject& root = jsonBuffer.createObject();
+  JsonObject& stateObject = root.createNestedObject("state");
+  JsonObject& reported = stateObject.createNestedObject("reported");
+
+  reported["version"] = VERSION;
+  reported["wifi"] = WiFi.SSID().c_str();
+  reported["state"] = STATE_STRING[state];
+
+  JsonObject& config = reported.createNestedObject("config");
+
+  injectConfig(config);
+  
+  StaticJsonBuffer<MAX_READ_SENSORS_RESULT_SIZE> readSensorsResultBuffer;
+  reported["sensors"] = readSensorsResultBuffer.parseObject(readSensorsResult);
     
-    Logger.println(" OK.");
+  if (!isnan(voltage)) {
+    reported["voltage"] = voltage;
   }
-  else
-  {
-    Logger.println(" Failed.");   
-    Logger.println();
+  int actualLength = root.measureLength();
+  if (actualLength >= MAX_STATE_JSON_LENGTH) {
+    Logger.println("!!! Resulting JSON is too long, expect errors");
   }
+
+  root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
+  Logger.println(stateJson);
+  return;
 }
