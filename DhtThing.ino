@@ -1,4 +1,4 @@
-#define VERSION 27.23
+#define VERSION 28.11
 
 #include <Arduino.h>
 
@@ -24,6 +24,8 @@
 
 #include "GPIO.h"
 
+#include <OneWire.h>
+
 ADC_MODE(ADC_VCC);
 
 #define DHT22_CHIP_ID 320929
@@ -36,7 +38,7 @@ ADC_MODE(ADC_VCC);
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
 
-#define MAX_LOCAL_PUBLISH_FILE_BYTES 300000 // 300kb
+#define MAX_LOCAL_PUBLISH_FILE_BYTES 200000 // 200kb
 
 #define MAX_READ_SENSORS_RESULT_SIZE 300
 
@@ -114,6 +116,7 @@ char value[12];
 
 int dht11Pin = -1;
 int dht22Pin = -1;
+int oneWirePin = -1;
 char readSensorsResult[MAX_READ_SENSORS_RESULT_SIZE];
 
 
@@ -543,7 +546,7 @@ void loop(void)
   }
   else if (state == update_config) { 
     publishState();
-    mqttLoop(5); // wait 5 seconds for deltas to go through
+    mqttLoop(2); // wait 2 seconds for deltas to go through
     if (configChanged) {
       saveConfig();
       yield();
@@ -580,7 +583,6 @@ void loop(void)
         Logger.println(value[i]);
       }
     }
-    delay(1000); // artificial delay to see effect
     toState(read_sensors);
   }
   else if (state == read_sensors) {
@@ -612,6 +614,12 @@ void loop(void)
         delay(2000);
         attempts++;
       }
+    }
+
+    if (oneWirePin != -1) {
+      JsonObject& oneWireJson = sensors.createNestedObject("OneWire");
+      
+      readOneWire(oneWirePin, oneWireJson);
     }
 
     sensors.printTo(readSensorsResult, MAX_READ_SENSORS_RESULT_SIZE);
@@ -651,6 +659,95 @@ void loop(void)
     deepSleep(sleepSeconds);
   }
 } 
+
+// code from http://playground.arduino.cc/Learning/OneWire
+void readOneWire(int oneWirePin, JsonObject& jsonObject) {
+  OneWire oneWire(oneWirePin);
+  byte i;
+  byte present = 0;
+  byte data[12];
+  byte addr[8];
+
+  oneWire.reset_search();
+  if ( !oneWire.search(addr)) {
+      Logger.print("No more addresses.\n");
+      oneWire.reset_search();
+      return;
+  }
+
+  Logger.print("R=");
+  for( i = 0; i < 8; i++) {
+    Logger.print(addr[i], HEX);
+    Logger.print(" ");
+  }
+
+  if ( OneWire::crc8( addr, 7) != addr[7]) {
+      Logger.print("CRC is not valid!\n");
+      return;
+  }
+
+  char device[10];
+  if ( addr[0] == 0x10) {
+      Logger.print("Device is a DS18S20 family device.\n");
+      strcpy(device, "DS18S20");
+  }
+  else {
+    if ( addr[0] == 0x28) {
+      Logger.print("Device is a DS18B20 family device.\n");
+      strcpy(device, "DS18B20");
+    }
+    else {
+      Logger.print("Device family is not recognized: 0x");
+      Logger.println(addr[0],HEX);
+      strcpy(device, "UNKNOWN");
+    }
+    jsonObject[String(device)] = "not supported";
+    return;
+  }
+
+  oneWire.reset();
+  oneWire.select(addr);
+  oneWire.write(0x44);         // start conversion, with parasite power on at the end
+
+  delay(1000);     // maybe 750ms is enough, maybe not
+  // we might do a ds.depower() here, but the reset will take care of it.
+
+  present = oneWire.reset();
+  oneWire.select(addr);    
+  oneWire.write(0xBE);         // Read Scratchpad
+
+  Logger.print("P=");
+  Logger.print(present,HEX);
+  Logger.print(" ");
+  for ( i = 0; i < 9; i++) {           // we need 9 bytes
+    data[i] = oneWire.read();
+    Logger.print(data[i], HEX);
+    Logger.print(" ");
+  }
+  Logger.print(" CRC=");
+  Logger.print( OneWire::crc8( data, 8), HEX);
+  Logger.println();
+
+  int HighByte, LowByte, TReading, SignBit, Tc_100, Whole, Fract;
+  LowByte = data[0];
+  HighByte = data[1];
+  TReading = (HighByte << 8) + LowByte;
+  SignBit = TReading & 0x8000;  // test most sig bit
+  if (SignBit) // negative
+  {
+    TReading = (TReading ^ 0xffff) + 1; // 2's comp
+  }
+  Tc_100 = (TReading*100/2); // for S family
+  // Tc_100 = (6 * TReading) + TReading / 4;    // multiply by (100 * 0.0625) or 6.25 (for B family)
+
+  Whole = Tc_100 / 100;  // separate off the whole and fractional portions
+  Fract = Tc_100 % 100;
+
+  char buf[20];
+  sprintf(buf, "%c%d.%d",SignBit ? '-' : ' ', Whole, Fract < 10 ? 0 : Fract);
+  jsonObject[String(device)] = buf;
+  Logger.println(buf);
+}
 
 void publishState() {
   char state[MAX_STATE_JSON_LENGTH];
@@ -735,6 +832,9 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
   else if (strcmp(device, "DHT22") == 0) {
     dht22Pin = pinNumber;
   }
+  else if (strcmp(device, "OneWire") == 0) {
+    oneWirePin = pinNumber;
+  }
 }
 
 // make sure this is synced with makeDevicePinPairing
@@ -749,6 +849,9 @@ void injectConfig(JsonObject& config) {
   }
   if (dht22Pin != -1) {
     gpio.set(String(dht22Pin), "DHT22");
+  }
+  if (oneWirePin != -1) {
+    gpio.set(String(oneWirePin), "OneWire");
   }
 }
 
