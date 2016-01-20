@@ -2,7 +2,7 @@
 #define IdiotLogger_h
 
 #define LOG_FILE "logFile.txt"
-#define MAX_LOG_FILE_SIZE 200000 // 200kb
+#define MAX_LOG_FILE_SIZE 150000 // 150kb
 #include "Arduino.h"
 #include <FS.h>
 #include "SizeLimitedFileAppender.h"

@@ -1,4 +1,4 @@
-#define VERSION 28.11
+#define VERSION 28.13
 
 #include <Arduino.h>
 
@@ -38,7 +38,7 @@ ADC_MODE(ADC_VCC);
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
 
-#define MAX_LOCAL_PUBLISH_FILE_BYTES 200000 // 200kb
+#define MAX_LOCAL_PUBLISH_FILE_BYTES 150000 // 150kb
 
 #define MAX_READ_SENSORS_RESULT_SIZE 300
 
@@ -876,7 +876,7 @@ void buildStateString(char* stateJson) {
   JsonObject& reported = stateObject.createNestedObject("reported");
 
   reported["version"] = VERSION;
-  reported["wifi"] = WiFi.SSID().c_str();
+  reported["wifi"] = WiFi.SSID();
   reported["state"] = STATE_STRING[state];
 
   JsonObject& config = reported.createNestedObject("config");

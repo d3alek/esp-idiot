@@ -43,6 +43,7 @@ size_t SizeLimitedFileAppender::write(uint8_t c) {
       _fileSize += temp.print(buffer);
       Serial.print(_fileSize);
       Serial.print(" ");
+      yield();
     }
     _file.close();
     SPIFFS.remove(_fileName);
