@@ -1,4 +1,4 @@
-#define VERSION 28.13
+#define VERSION 29.1
 
 #include <Arduino.h>
 
@@ -34,7 +34,7 @@ ADC_MODE(ADC_VCC);
 #define HARD_RESET_PIN 0
 #define BUILTIN_LED 2 // on my ESP-12s the blue led is connected to GPIO2 not GPIO1
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
-#define MAX_STATE_JSON_LENGTH 300
+#define MAX_STATE_JSON_LENGTH 350
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
 
@@ -118,7 +118,6 @@ int dht11Pin = -1;
 int dht22Pin = -1;
 int oneWirePin = -1;
 char readSensorsResult[MAX_READ_SENSORS_RESULT_SIZE];
-
 
 char finalState[MAX_STATE_JSON_LENGTH];
 
@@ -475,7 +474,7 @@ void mqttLoop(int seconds) {
 }
 
 void loop(void)
-{
+{ 
   loopResetButton();
   
   if (state == boot) {
@@ -580,7 +579,10 @@ void loop(void)
         Logger.print("OUTPUT GPIO");
         Logger.print(gpioNumber);
         Logger.print(" ");
-        Logger.println(value[i]);
+        Logger.print(value[i]);
+        Logger.println(" for 1 second");
+        delay(1000);
+        digitalWrite(gpioNumber, value[i] == 'h' ? LOW : HIGH);
       }
     }
     toState(read_sensors);
@@ -597,7 +599,7 @@ void loop(void)
       int attempts = 0;
       Serial.print("Reading DHT11 from pin ");
       Serial.println(dht11Pin);
-      while (!readTemperatureHumidity(dht11, dht11Json) && attempts < 5) {
+      while (!readTemperatureHumidity(dht11, dht11Json) && attempts < 3) {
         delay(2000);
         attempts++;
       }
@@ -610,7 +612,7 @@ void loop(void)
       int attempts = 0;
       Serial.print("Reading DHT22 from pin ");
       Serial.println(dht22Pin);
-      while (!readTemperatureHumidity(dht22, dht22Json) && attempts < 5) {
+      while (!readTemperatureHumidity(dht22, dht22Json) && attempts < 3) {
         delay(2000);
         attempts++;
       }
@@ -648,7 +650,8 @@ void loop(void)
   else if (state == publish) {
     char topic[30];
     constructTopicName(topic, "things/");
-    Logger.print("Publishing State to ");
+    Logger.println(finalState);
+    Logger.print("Publishing to ");
     Logger.println(topic);
     mqttClient.publish(topic, finalState, true);
     yield();
@@ -745,7 +748,7 @@ void readOneWire(int oneWirePin, JsonObject& jsonObject) {
 
   char buf[20];
   sprintf(buf, "%c%d.%d",SignBit ? '-' : ' ', Whole, Fract < 10 ? 0 : Fract);
-  jsonObject[String(device)] = buf;
+  jsonObject[String(device)] = String(buf);
   Logger.println(buf);
 }
 
