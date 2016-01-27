@@ -23,8 +23,11 @@ void OneWireSensors::readOneWire(IdiotLogger Logger, int oneWirePin, JsonObject&
         return;
     }
   
-    char device[17];
-    bytesToHex(device, addr);
+    char deviceAddr[17];
+    bytesToHex(deviceAddr, addr);
+    char device[25];
+    strcpy(device, "OW-");
+    strcat(device, deviceAddr);
     Logger.print("addr: ");
     Logger.print(device);
     if ( addr[0] == 0x10) {

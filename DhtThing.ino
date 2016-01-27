@@ -1,4 +1,4 @@
-#define VERSION 30.2
+#define VERSION 31.1
 
 #include <Arduino.h>
 
@@ -41,7 +41,7 @@ ADC_MODE(ADC_VCC);
 
 #define MAX_LOCAL_PUBLISH_FILE_BYTES 150000 // 150kb
 
-#define MAX_READ_SENSORS_RESULT_SIZE 300
+#define MAX_READ_SENSES_RESULT_SIZE 300
 
 #define ELEVEN_DASHES "-----------"
 
@@ -88,7 +88,7 @@ long clientWaitStartedTime;
         STATE(update_config) \
         STATE(local_update_config) \
         STATE(process_gpio) \
-        STATE(read_sensors) \
+        STATE(read_senses) \
         STATE(publish) \
         STATE(local_publish)  \
         STATE(ota_update)    \
@@ -118,7 +118,7 @@ char value[12];
 int dht11Pin = -1;
 int dht22Pin = -1;
 int oneWirePin = -1;
-char readSensorsResult[MAX_READ_SENSORS_RESULT_SIZE];
+char readSensesResult[MAX_READ_SENSES_RESULT_SIZE];
 
 char finalState[MAX_STATE_JSON_LENGTH];
 
@@ -586,48 +586,43 @@ void loop(void)
         digitalWrite(gpioNumber, value[i] == 'h' ? LOW : HIGH);
       }
     }
-    toState(read_sensors);
+    toState(read_senses);
   }
-  else if (state == read_sensors) {
-    
-    StaticJsonBuffer<MAX_READ_SENSORS_RESULT_SIZE> jsonBuffer;
-    JsonObject& sensors = jsonBuffer.createObject();
+  else if (state == read_senses) {
+    StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
+    JsonObject& senses = jsonBuffer.createObject();
     
     if (dht11Pin != -1) {
-      JsonObject& dht11Json = sensors.createNestedObject("DHT11");
       DHT dht11(dht11Pin, DHT11);
       dht11.begin();
       int attempts = 0;
       Serial.print("Reading DHT11 from pin ");
       Serial.println(dht11Pin);
-      while (!readTemperatureHumidity(dht11, dht11Json) && attempts < 3) {
+      while (!readTemperatureHumidity("DHT11", dht11, senses) && attempts < 3) {
         delay(2000);
         attempts++;
       }
     }
     
     if (dht22Pin != -1) {
-      JsonObject& dht22Json = sensors.createNestedObject("DHT22");
       DHT dht22(dht22Pin, DHT22);
       dht22.begin();
       int attempts = 0;
       Serial.print("Reading DHT22 from pin ");
       Serial.println(dht22Pin);
-      while (!readTemperatureHumidity(dht22, dht22Json) && attempts < 3) {
+      while (!readTemperatureHumidity("DHT22", dht22, senses) && attempts < 3) {
         delay(2000);
         attempts++;
       }
     }
 
-    if (oneWirePin != -1) {
-      JsonObject& oneWireJson = sensors.createNestedObject("OneWire");
-      
-      IdiotOneWire.readOneWire(Logger, oneWirePin, oneWireJson);
+    if (oneWirePin != -1) {    
+      IdiotOneWire.readOneWire(Logger, oneWirePin, senses);
     }
 
-    sensors.printTo(readSensorsResult, MAX_READ_SENSORS_RESULT_SIZE);
-    Logger.print("readSensorsResult: ");
-    Logger.println(readSensorsResult);
+    senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
+    Logger.print("readSensesResult: ");
+    Logger.println(readSensesResult);
 
     readInternalVoltage();
     
@@ -680,7 +675,7 @@ void readInternalVoltage() {
   Logger.println(voltage);
 }
 
-bool readTemperatureHumidity(DHT dht, JsonObject& jsonObject) {
+bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObject) {
   Logger.print("DHT ");
   
   float temp_c, humidity;
@@ -697,11 +692,20 @@ bool readTemperatureHumidity(DHT dht, JsonObject& jsonObject) {
     Logger.println(temp_c);
     Logger.print("Humidity: ");
     Logger.println(humidity);
-    jsonObject["t"] = temp_c;
-    jsonObject["h"] = humidity;
+    char sense[15];
+    buildSenseKey(sense, dhtType, "t");
+    jsonObject[String(sense)] = temp_c;
+    buildSenseKey(sense, dhtType, "h");
+    jsonObject[String(sense)] = humidity;
     
     return true;
   }
+}
+
+void buildSenseKey(char* sense, const char* sensor, const char* readingName) {
+  strcpy(sense, sensor);
+  strcat(sense, "-");
+  strcat(sense, readingName);
 }
 
 void loadConfig(char* string) {
@@ -798,8 +802,8 @@ void buildStateString(char* stateJson) {
 
   injectConfig(config);
   
-  StaticJsonBuffer<MAX_READ_SENSORS_RESULT_SIZE> readSensorsResultBuffer;
-  reported["sensors"] = readSensorsResultBuffer.parseObject(readSensorsResult);
+  StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
+  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResult);
     
   if (!isnan(voltage)) {
     reported["voltage"] = voltage;
