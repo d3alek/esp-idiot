@@ -3,9 +3,10 @@
 
 #define BUFFER_SIZE 300
 #define TEMP_FILE "SizeLimitedFileAppender.temp"
+#define MAX_DELETE_FILE_ATTEMPTS 3
 
 #include "Arduino.h"
-#include <FS.h>
+#include "FS.h"
 
 // following the example of https://code.google.com/p/arduino/source/browse/trunk/hardware/arduino/cores/arduino/HardwareSerial.h?r=982
 class SizeLimitedFileAppender : public Stream {
@@ -28,6 +29,7 @@ class SizeLimitedFileAppender : public Stream {
     int _sizeLimitInBytes;
     int _fileSize;
     bool _deleteFile();
+    int deleteFileAttempts = 0;
 };
 
 #endif

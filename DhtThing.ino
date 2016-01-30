@@ -1,4 +1,4 @@
-#define VERSION 31.1
+#define VERSION 32
 
 #include <Arduino.h>
 
@@ -27,7 +27,14 @@
 #include <OneWire.h>
 #include "OneWireSensors.h"
 
+#include "Action.h"
+#include <Ticker.h>
+
 ADC_MODE(ADC_VCC);
+
+#define OSWATCH_RESET_TIME 60 // 1 minute
+Ticker tickerOSWatch;
+static unsigned long last_loop;
 
 #define DHT22_CHIP_ID 320929
 #define DHTPIN  2
@@ -121,6 +128,19 @@ int oneWirePin = -1;
 char readSensesResult[MAX_READ_SENSES_RESULT_SIZE];
 
 char finalState[MAX_STATE_JSON_LENGTH];
+
+Action actions[30];
+int actionsSize = 0;
+
+void ICACHE_RAM_ATTR osWatch(void) {
+    unsigned long t = millis();
+    unsigned long last_run = abs(t - last_loop);
+    if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
+      // save the hit here to eeprom or to rtc memory if needed
+        ESP.restart();  // normal reboot 
+        //ESP.reset();  // hard reset
+    }
+}
 
 void toState(int newState) {
   if (state == newState) {
@@ -438,6 +458,9 @@ void loopResetButton() {
 
 void setup(void)
 {
+  last_loop = millis();
+  tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
+    
   SPIFFS.begin();
   Logger.begin(115200);
   Logger.setDebugOutput(true); 
@@ -475,7 +498,8 @@ void mqttLoop(int seconds) {
 }
 
 void loop(void)
-{ 
+{
+  last_loop = millis();
   loopResetButton();
   
   if (state == boot) {
@@ -741,6 +765,29 @@ void loadConfig(char* string) {
       }
     }
   }
+  if (config.containsKey("actions")) {
+    JsonObject& actionsJson = config["actions"];
+    for (JsonObject::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
+    {
+      Logger.println(it->key);
+      Logger.println(it->value.asString());
+
+      Action action;
+      strcpy(action.sense, it->key);
+      JsonObject& actionDetails = it->value.asObject();
+      if (actionDetails == JsonObject::invalid()) {
+        Logger.println("ERROR: Could not parse action details");
+        continue;
+      }
+      for (JsonObject::iterator it2=actionDetails.begin(); it2!=actionDetails.end(); ++it2)
+      {
+        Logger.println(it2->key);
+        Logger.println(it2->value.asString());
+        parseThresholdDeltaString(it2->key, action);
+      }
+      actionsSize++;
+    }
+  }
 }
 
 // make sure this is synced with injectConfig
@@ -772,6 +819,9 @@ void injectConfig(JsonObject& config) {
   if (oneWirePin != -1) {
     gpio.set(String(oneWirePin), "OneWire");
   }
+
+  JsonObject& actions = config.createNestedObject("actions");
+  injectActions(actions);
 }
 
 void saveConfig() {
@@ -785,6 +835,28 @@ void saveConfig() {
   char configString[300];
   root.printTo(configString, 300);
   PersistentStore.putConfig(configString);
+}
+
+void injectActions(JsonObject& actionsJson) {
+  for (int i = 0; i < actionsSize; ++i) {
+    Action action = actions[i];
+    JsonObject& thisActionJson = actionsJson.createNestedObject(action.sense);
+    char thresholdDeltaString[20];
+    buildThresholdDeltaString(thresholdDeltaString, action.threshold, action.delta);
+    JsonArray& gpios = thisActionJson.createNestedArray(thresholdDeltaString);
+    for (int j = 0; j < action.gpiosSize; ++j) {
+      gpios.add(action.gpios[j]);
+    } 
+  }
+}
+
+void buildThresholdDeltaString(char* thresholdDeltaString, float threshold, float delta) {
+  sprintf(thresholdDeltaString, "%.2f~%.2f", threshold, delta);
+}
+
+void parseThresholdDeltaString(const char* thresholdDeltaString, Action action) {
+  action.threshold = 0;
+  action.delta = 0;
 }
 
 void buildStateString(char* stateJson) {
@@ -804,7 +876,6 @@ void buildStateString(char* stateJson) {
   
   StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
   reported["senses"] = readSensesResultBuffer.parseObject(readSensesResult);
-    
   if (!isnan(voltage)) {
     reported["voltage"] = voltage;
   }

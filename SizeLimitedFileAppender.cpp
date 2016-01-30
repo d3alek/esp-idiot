@@ -56,8 +56,16 @@ size_t SizeLimitedFileAppender::write(uint8_t c) {
 }
 
 bool SizeLimitedFileAppender::_deleteFile() {
-  Serial.println("Clear current file.");
+  Serial.print("Clear current file attempt: ");
+  Serial.println(++deleteFileAttempts);
+  if (deleteFileAttempts > MAX_DELETE_FILE_ATTEMPTS) {
+    Serial.println("Formatting file system");
+    SPIFFS.format();
+    return false;
+  }
+
   SPIFFS.remove(_fileName);
+  
   return open(_fileName, _sizeLimitInBytes);
 }
 
