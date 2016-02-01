@@ -1,3 +1,6 @@
+#ifndef ESP_PERSISTENT_STORE_H
+#define ESP_PERSISTENT_STORE_H
+
 #define CONFIG_MAX_SIZE 200
 
 #define WIFI_NAME_OFFSET 100
@@ -25,3 +28,5 @@ class EspPersistentStore {
 };
 
 extern EspPersistentStore PersistentStore;
+
+#endif

@@ -1,4 +1,4 @@
-#define VERSION 32
+#define VERSION 33.1
 
 #include <Arduino.h>
 
@@ -8,13 +8,13 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 
+#include "ESP8266WebServer.h" // including locally because http://stackoverflow.com/a/6506611/5799810
+
 #include <DHT.h>
 #include <PubSubClient.h>
 #include <EEPROM.h>
 
 #include "EspPersistentStore.h"
-
-#include <ESP8266WebServer.h>
 
 #include <ArduinoJson.h>
 
@@ -30,6 +30,7 @@
 #include "Action.h"
 #include <Ticker.h>
 
+#include "EspControl.h"
 ADC_MODE(ADC_VCC);
 
 #define OSWATCH_RESET_TIME 60 // 1 minute
@@ -40,9 +41,8 @@ static unsigned long last_loop;
 #define DHTPIN  2
 #define DEFAULT_SLEEP_SECONDS 60*15
 #define HARD_RESET_PIN 0
-#define BUILTIN_LED 2 // on my ESP-12s the blue led is connected to GPIO2 not GPIO1
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
-#define MAX_STATE_JSON_LENGTH 350
+#define MAX_STATE_JSON_LENGTH 512
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
 
@@ -54,20 +54,13 @@ static unsigned long last_loop;
 
 const int chipId = ESP.getChipId();
 
-/* Set these to your desired credentials. */
 const char uuidPrefix[] = "ESP";
-const char password[] = "very!private!";
-
-ESP8266WebServer server(80);
 
 const char mqttHostname[] = "m20.cloudmqtt.com";
 const int mqttPort = 13356;
 WiFiClient wclient;
 ESP8266WiFiMulti WiFiMulti;
 PubSubClient mqttClient(wclient);
-
-IPAddress apIP(192, 168, 1, 1);
-IPAddress netMsk(255, 255, 255, 0);
 
 float voltage = NAN;
 
@@ -85,37 +78,13 @@ int mqttConnectAttempts = 0;
 int wifiConnectAttempts = 0;
 long clientWaitStartedTime;
 
-#define FOREACH_STATE(STATE) \
-        STATE(boot)   \
-        STATE(setup_wifi)  \
-        STATE(connect_to_wifi) \
-        STATE(connect_to_mqtt) \
-        STATE(serve_locally) \
-        STATE(load_config) \
-        STATE(update_config) \
-        STATE(local_update_config) \
-        STATE(process_gpio) \
-        STATE(read_senses) \
-        STATE(publish) \
-        STATE(local_publish)  \
-        STATE(ota_update)    \
-        STATE(deep_sleep)  \
-        STATE(client_wait) \
-        STATE(hard_reset)  \
-
-#define GENERATE_ENUM(ENUM) ENUM,
-#define GENERATE_STRING(STRING) #STRING,
-typedef enum {
-    FOREACH_STATE(GENERATE_ENUM)
-} state_enum;
-
-static const char *STATE_STRING[] = {
-    FOREACH_STATE(GENERATE_STRING)
-};
+#include "State.h"
+#include "IdiotWifiServer.h"
 
 int state = boot;
 
 IdiotLogger Logger;
+IdiotWifiServer idiotWifiServer;
 
 char mode[12];
 char value[12];
@@ -156,99 +125,6 @@ void toState(int newState) {
   state = newState;
 }
 
-void restart() {
-  deepSleep(1);
-}
-
-void deepSleep(int seconds) {
-  clientWaitStartedTime = millis();
-  while (server.client() && clientWaitStartedTime + 5000 > millis()) {
-    toState(client_wait);
-    yield();
-  }
-  toState(deep_sleep);
-  Logger.flush();
-  Logger.close();
-  ESP.deepSleep(seconds*1000000, WAKE_RF_DEFAULT);
-}
-
-void blink() {
-  if (ledOn()) {
-    turnLedOff();
-    delay(500);
-    turnLedOn();
-  }
-  else {
-    turnLedOn();
-    delay(500);
-    turnLedOff();    
-  }
-}
-
-void handleRoot() {
-  blink();
-  String content = "<html><body><form action='/wifi-credentials-entered' method='POST'>";
-  content += "Wifi Access Point Name:<input type='text' name='wifiName' placeholder='wifi name'><br>";
-  content += "Wifi Password:<input type='password' name='wifiPassword' placeholder='wifi password'><br>";
-  content += "<input type='submit' name='SUBMIT' value='Submit'></form><br>";
-  server.send(200, "text/html", content);
-}
-
-void serveLogs() {
-  blink();
-  Logger.close();
-  File logFile = SPIFFS.open(LOG_FILE, "r");
-  int logFileSize = logFile.size();
-  logFile.flush();
-  logFile.seek(0, SeekSet);
-  server.sendHeader("Content-Length", String(logFileSize));
-  server.sendHeader("Connection", "close");
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "text/html", "");
-  WiFiClient client = server.client();
-
-  int sentSize = client.write(logFile, HTTP_DOWNLOAD_UNIT_SIZE);
-  
-  logFile.close();
-  Logger.begin(115200);
-  if (sentSize != logFileSize) {
-    Logger.println("Sent different data length than expected");
-    Logger.print("Expected: "); Logger.println(logFileSize);
-    Logger.print("Actual: "); Logger.println(sentSize);
-  }
-}
-
-void serveLocalPublish() {
-  blink();
-  File localPublishFile = SPIFFS.open(LOCAL_PUBLISH_FILE, "r");
-  int fileSize = localPublishFile.size();
-  
-  server.sendHeader("Content-Length", String(fileSize));
-  server.sendHeader("Connection", "close");
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "text/html", "");
-  WiFiClient client = server.client();
-
-  int sentSize = client.write(localPublishFile, HTTP_DOWNLOAD_UNIT_SIZE);
-  if (sentSize != fileSize) {
-    Logger.println("Sent different data length than expected");
-    Logger.print("Expected: "); Logger.println(fileSize);
-    Logger.print("Actual: "); Logger.println(sentSize);
-  }
-}
-
-void handleWifiCredentialsEntered() {
-  blink();
-  if (server.hasArg("wifiName") && server.hasArg("wifiPassword")) {
-    PersistentStore.putWifiName(server.arg("wifiName").c_str());
-    PersistentStore.putWifiPassword(server.arg("wifiPassword").c_str());
-    server.send(200, "text/plain", "Thank you, going to try to connect using the given credentials now.");
-    restart();
-  }
-  else {
-    server.send(200, "text/plain", "No wifi credentials found in POST request.");
-  }
-}
 const char* updateFromS3(char* updatePath) {
   toState(ota_update);
   char updateUrl[100] = "http://idiot-esp.s3-website-eu-west-1.amazonaws.com/updates/";
@@ -306,6 +182,7 @@ void constructTopicName(char* topic, const char* topicPrefix) {
   strcpy(topic, topicPrefix);
   strcat(topic, uuid);
 }
+
 bool mqttConnect() {
   Logger.print("MQTT ");
   mqttClient.setServer(mqttHostname, mqttPort).setCallback(mqttCallback);
@@ -335,111 +212,6 @@ bool mqttConnect() {
   return false;
 }
 
-const char* updateIndex = "<form method='POST' action='/update' enctype='multipart/form-data'><input type='file' name='update'><input type='submit' value='Update'></form>";
-
-bool ledOn() {
-  return digitalRead(BUILTIN_LED) == LOW;
-}
-
-void turnLedOn() {
-  digitalWrite(BUILTIN_LED, LOW);
-}
-
-void turnLedOff() {
-  digitalWrite(BUILTIN_LED, HIGH);
-}
-
-void httpUpdateAnswer() {  
-  blink();
-  server.sendHeader("Connection", "close");
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
-  restart();
-}
-
-void httpUpdateDo() {
-  blink();
-  HTTPUpload& upload = server.upload();
-  if(upload.status == UPLOAD_FILE_START){
-    WiFiUDP::stopAll();
-    
-    uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
-    if(!Update.begin(maxSketchSpace)){//start with max available size
-      Update.printError(Logger);
-    }
-  } else if(upload.status == UPLOAD_FILE_WRITE){
-    if(Update.write(upload.buf, upload.currentSize) != upload.currentSize){
-      Update.printError(Logger);
-    }
-  } else if(upload.status == UPLOAD_FILE_END){
-    if(Update.end(true)){ //true to set the size to the current progress
-      // update success
-    } else {
-      Update.printError(Logger);
-    }
-  }
-  yield();
-}
-
-void format() {
-  SPIFFS.format();
-  server.sendHeader("Connection", "close");
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "text/html", "OK");
-}
-
-void httpUpdateGet() {
-  blink();
-  server.sendHeader("Connection", "close");
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "text/html", updateIndex);
-}
-
-void startWifiCredentialsInputServer() {
-  Logger.println("Configuring access point...");
-  delay(1000);
-  pinMode(BUILTIN_LED, OUTPUT);
-  turnLedOn();
-  
-  WiFi.mode(WIFI_AP);
-  WiFi.softAPConfig(apIP, apIP, netMsk);
-  WiFi.softAP(uuid, password);
-
-  IPAddress myIP = WiFi.softAPIP();
-  Logger.println(myIP);
-
-  server.on("/", handleRoot);
-  server.on("/format", format);
-  server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
-  server.on("/update", HTTP_GET, httpUpdateGet);
-  server.on("/update", HTTP_POST, httpUpdateAnswer, httpUpdateDo);
-  server.on("/logs", serveLogs);
-  server.on("/local-publish", serveLocalPublish);
-  server.begin();
-  blink();
-}
-
-void startLocalControlServer() {
-  Logger.println("Starting local control server...");
-  delay(1000);
-  pinMode(BUILTIN_LED, OUTPUT);
-  turnLedOff();
-  
-  WiFi.softAPConfig(apIP, apIP, netMsk);
-  WiFi.softAP(uuid, password);
-
-  IPAddress myIP = WiFi.softAPIP();
-  Logger.println(myIP);
-
-  server.on("/logs", serveLogs);
-  server.on("/format", format);
-  server.on("/local-publish", serveLocalPublish);
-  server.on("/wifi-credentials-entered", handleWifiCredentialsEntered);
-  server.on("/update", HTTP_GET, httpUpdateGet);
-  server.on("/update", HTTP_POST, httpUpdateAnswer, httpUpdateDo);
-  server.begin();
-}
-
 void setupResetButton() {
   pinMode(HARD_RESET_PIN, INPUT);
 }
@@ -447,7 +219,7 @@ void setupResetButton() {
 void hardReset() {
   toState(hard_reset);
   PersistentStore.clear();
-  restart();
+  EspControl.restart();
 }
 
 void loopResetButton() {
@@ -505,7 +277,7 @@ void loop(void)
   if (state == boot) {
     if (!PersistentStore.wifiCredentialsStored()) {
       toState(setup_wifi);
-      startWifiCredentialsInputServer();
+      idiotWifiServer.start(uuid, LOCAL_PUBLISH_FILE, Logger);
       return;
     }
     else {
@@ -546,12 +318,12 @@ void loop(void)
     return;
   }
   else if (state == serve_locally) {
-    startLocalControlServer();
+    idiotWifiServer.start(uuid, LOCAL_PUBLISH_FILE, Logger);
     toState(load_config);
     return;
   }
   
-  server.handleClient();
+  idiotWifiServer.handleClient();
   
   if (state == setup_wifi) {
     return;
@@ -664,7 +436,7 @@ void loop(void)
       toState(publish);
     }
     else {
-      deepSleep(sleepSeconds);
+      toState(deep_sleep);
     }
   }
   else if (state == publish) {
@@ -678,8 +450,11 @@ void loop(void)
     
     unsigned long awakeMillis = millis();
     Logger.println(awakeMillis);
-  
-    deepSleep(sleepSeconds);
+
+    toState(deep_sleep);
+  }
+  else if (state == deep_sleep) {
+    EspControl.deepSleep(sleepSeconds);
   }
 }
 
