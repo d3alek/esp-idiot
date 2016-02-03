@@ -1,4 +1,5 @@
-#define VERSION 33.1
+
+#define VERSION 34.61
 
 #include <Arduino.h>
 
@@ -8,13 +9,15 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 
-#include "ESP8266WebServer.h" // including locally because http://stackoverflow.com/a/6506611/5799810
+#include <ESP8266WebServer.h> // including because http://stackoverflow.com/a/6506611/5799810
 
 #include <DHT.h>
 #include <PubSubClient.h>
 #include <EEPROM.h>
 
 #include "EspPersistentStore.h"
+
+#include <Time.h>
 
 #include <ArduinoJson.h>
 
@@ -31,6 +34,15 @@
 #include <Ticker.h>
 
 #include "EspControl.h"
+
+#include <AmazonIOTClient.h>
+#include <ESP8266AWSImplementations.h>
+
+Esp8266HttpClient httpClient;
+Esp8266DateTimeProvider dateTimeProvider;
+
+AmazonIOTClient iotClient;
+
 ADC_MODE(ADC_VCC);
 
 #define OSWATCH_RESET_TIME 60 // 1 minute
@@ -51,6 +63,8 @@ static unsigned long last_loop;
 #define MAX_READ_SENSES_RESULT_SIZE 300
 
 #define ELEVEN_DASHES "-----------"
+
+#define MAX_DELTA_LENGTH 500
 
 const int chipId = ESP.getChipId();
 
@@ -259,6 +273,19 @@ void setup(void)
   setupResetButton();
   
   WiFi.mode(WIFI_AP_STA);
+
+  iotClient.setAWSRegion("eu-west-1");
+  iotClient.setAWSEndpoint("amazonaws.com");
+  iotClient.setAWSDomain("A1HYLLFCLCSZTC.iot.eu-west-1.amazonaws.com");
+  char awsPath[50];
+  strcpy(awsPath, "/things/");
+  strcat(awsPath, uuid);
+  strcat(awsPath, "/shadow");
+  iotClient.setAWSPath(awsPath);
+  iotClient.setAWSKeyID("AKIAIYG2N7KAHJE7BNSQ");
+  iotClient.setAWSSecretKey("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");
+  iotClient.setHttpClient(&httpClient);
+  iotClient.setDateTimeProvider(&dateTimeProvider);
 }
 
 void mqttLoop(int seconds) {
@@ -341,12 +368,10 @@ void loop(void)
     }
   }
   else if (state == update_config) { 
-    publishState();
-    mqttLoop(2); // wait 2 seconds for deltas to go through
+    readConfigFromCloud();
     if (configChanged) {
       saveConfig();
       yield();
-      publishState();
     }
     toState(process_gpio);
   }
@@ -456,6 +481,39 @@ void loop(void)
   else if (state == deep_sleep) {
     EspControl.deepSleep(sleepSeconds);
   }
+}
+
+void readConfigFromCloud() {
+  Logger.println("Getting shadow... ");
+  char* shadow = iotClient.get_shadow();
+  Logger.println(shadow);
+  char delta[MAX_DELTA_LENGTH];
+  Logger.println("Parsing delta... ");
+  parseDelta(delta, shadow);
+  Logger.println(delta);
+}
+
+void parseDelta(char* delta, const char* shadow) {
+  char* deltaKeywordStart = strstr(shadow, "delta");
+  if (deltaKeywordStart == NULL) {
+    Logger.print("No delta in shadow.");
+    strcpy(delta, "");
+    return;
+  }
+  char* deltaStart = strchr(deltaKeywordStart, '{');
+  int opening = 1;
+  int closing = 0;
+  int i = 1;
+  while (opening != closing && i < MAX_DELTA_LENGTH) {
+    if (deltaStart[i] == '{') {
+      opening++; 
+    }
+    else if (deltaStart[i] == '}') {
+      closing++;
+    }
+    ++i;
+  }
+  strncpy(delta, deltaStart, i);
 }
 
 void publishState() {
