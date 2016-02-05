@@ -12,6 +12,7 @@ ESP8266WebServer server(80);
 char _localPublishFile[20];        
 IdiotLogger _logger;
 char _uuid[15];
+bool started = false;
 
 void handleRoot() {
   String content = "<html><body><form action='/wifi-credentials-entered' method='POST'>";
@@ -119,6 +120,7 @@ void serveLogs() {
 }
 
 void IdiotWifiServer::start(const char* uuid, const char* localPublishFile, IdiotLogger logger) {
+  started = true;
   strcpy(_uuid, uuid);
   strcpy(_localPublishFile, localPublishFile);
   _logger = logger;
@@ -145,6 +147,9 @@ void IdiotWifiServer::start(const char* uuid, const char* localPublishFile, Idio
 }
 
 void IdiotWifiServer::handleClient() {
+  if (!started) {
+    return;
+  }
   server.handleClient();
   EspControl.toggleLed();
 }

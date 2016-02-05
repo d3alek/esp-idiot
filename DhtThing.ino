@@ -273,6 +273,7 @@ void loop(void)
 {
   last_loop = millis();
   loopResetButton();
+  idiotWifiServer.handleClient();
   
   if (state == boot) {
     if (!PersistentStore.wifiCredentialsStored()) {
@@ -322,8 +323,6 @@ void loop(void)
     toState(load_config);
     return;
   }
-  
-  idiotWifiServer.handleClient();
   
   if (state == setup_wifi) {
     return;
