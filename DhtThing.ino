@@ -1,4 +1,4 @@
-#define VERSION 33.1
+#define VERSION 34.8
 
 #include <Arduino.h>
 
@@ -56,8 +56,13 @@ const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
 
-const char mqttHostname[] = "m20.cloudmqtt.com";
-const int mqttPort = 13356;
+// file which defines 
+// const char* mqttHostname
+// const int mqttPort
+// const char* mqttUser
+// const char* mqttPassword
+#include "MQTTConfig.h"
+
 WiFiClient wclient;
 ESP8266WiFiMulti WiFiMulti;
 PubSubClient mqttClient(wclient);
@@ -69,8 +74,6 @@ int sleepSeconds = DEFAULT_SLEEP_SECONDS;
 char uuid[15];
 char updateTopic[20];
 char updateResultTopic[30];
-char pingTopic[20];
-char pongTopic[20];
 bool configChanged = false;
 #define LOCAL_UPDATE_WAITS 5
 int localUpdateWaits = 0;
@@ -167,12 +170,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     mqttClient.publish(updateTopic, emptyMessage, 0, true);
     mqttClient.publish(updateResultTopic, updateFromS3(normalizedPayload), true);
   }
-  else if (strcmp(topic, pingTopic) == 0) {
-    mqttClient.publish(pongTopic, normalizedPayload);
-  }
   else {
     loadConfig(normalizedPayload);
-    configChanged = true;
   }
 }
 
@@ -186,14 +185,12 @@ void constructTopicName(char* topic, const char* topicPrefix) {
 bool mqttConnect() {
   Logger.print("MQTT ");
   mqttClient.setServer(mqttHostname, mqttPort).setCallback(mqttCallback);
-  if (mqttClient.connect(uuid, "nqquaqbf", "OocuDtvW1p9F")) {
+  if (mqttClient.connect(uuid, mqttUser, mqttPassword)) {
     Logger.println("OK");
     constructTopicName(updateTopic, "update/");
     char deltaTopic[30];
     constructTopicName(deltaTopic, "things/");
     strcat(deltaTopic, "/delta");
-    constructTopicName(pingTopic, "ping/");
-    constructTopicName(pongTopic, "pong/");
 
     strcpy(updateResultTopic, updateTopic);
     strcat(updateResultTopic,"/result");
@@ -203,8 +200,6 @@ bool mqttConnect() {
     Logger.println(updateTopic);
     mqttClient.subscribe(deltaTopic);
     Logger.println(deltaTopic);
-    mqttClient.subscribe(pingTopic);
-    Logger.println(pingTopic);
     return true;
   }
   Logger.print("failed, rc=");
@@ -273,6 +268,7 @@ void loop(void)
 {
   last_loop = millis();
   loopResetButton();
+  
   idiotWifiServer.handleClient();
   
   if (state == boot) {
@@ -340,12 +336,13 @@ void loop(void)
     }
   }
   else if (state == update_config) { 
-    publishState();
-    mqttLoop(2); // wait 2 seconds for deltas to go through
+    requestState();
+    configChanged = false;
+    mqttLoop(1); // wait 1 second for delta to go through
     if (configChanged) {
+      Logger.println("Config changed.");
       saveConfig();
       yield();
-      publishState();
     }
     toState(process_gpio);
   }
@@ -441,10 +438,12 @@ void loop(void)
   else if (state == publish) {
     char topic[30];
     constructTopicName(topic, "things/");
+    strcat(topic, "/update");
+    
     Logger.println(finalState);
     Logger.print("Publishing to ");
     Logger.println(topic);
-    mqttClient.publish(topic, finalState, true);
+    mqttClient.publish(topic, finalState);
     yield();
     
     unsigned long awakeMillis = millis();
@@ -457,14 +456,13 @@ void loop(void)
   }
 }
 
-void publishState() {
-  char state[MAX_STATE_JSON_LENGTH];
-  buildStateString(state);
+void requestState() {
   char topic[30];
   constructTopicName(topic, "things/");
-  Logger.print("Publishing State to ");
+  strcat(topic, "/get");
+  Logger.print("Publishing to ");
   Logger.println(topic);
-  mqttClient.publish(topic, state, true);
+  mqttClient.publish(topic, "{}");
 }
 
 void readInternalVoltage() {
@@ -514,32 +512,33 @@ void loadConfig(char* string) {
     Logger.println(string);
     return;
   }
-  JsonObject& config = root["state"]["config"];
   
+  if (root.containsKey("state")) {
+    loadConfig(root["state"]["config"]); // properly formatted config stored in flash
+  }
+  else if (root.containsKey("delta")) {
+    loadConfig(root["delta"]); // buggy IoT json
+  }
+  else {
+    Logger.println("Empty delta");
+  }
+}
+
+void loadConfig(JsonObject& config) {
   if (config.containsKey("sleep")) {
+    configChanged = true;
     sleepSeconds = atoi(config["sleep"]);
   }
+  
   if (config.containsKey("gpio")) {
-    JsonObject& gpio = config["gpio"];
-    if (gpio.containsKey("mode")) {
-      strcpy(mode, gpio["mode"]);
-    }
-    if (gpio.containsKey("value")) {
-      strcpy(value, gpio["value"]);
-    }
-    int modeSize = strlen(mode);
-    char pinBuffer[3];
-    for (int i = 0; i < modeSize; ++i) {
-      int gpioNumber = GPIO_NUMBER[i];
-      if (mode[i] == 's') {
-        itoa(gpioNumber,pinBuffer,10);
-        if (gpio.containsKey(pinBuffer)) {
-          makeDevicePinPairing(gpioNumber, gpio[pinBuffer].asString());
-        }
-      }
-    }
+    loadGpioConfig(config["gpio"]); // properly formatted config stored in flash
   }
+  else {
+    loadGpioConfig(config); // buggy IoT json
+  }
+  
   if (config.containsKey("actions")) {
+    configChanged = true;
     JsonObject& actionsJson = config["actions"];
     for (JsonObject::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
     {
@@ -560,6 +559,29 @@ void loadConfig(char* string) {
         parseThresholdDeltaString(it2->key, action);
       }
       actionsSize++;
+    }
+  } 
+}
+
+void loadGpioConfig(JsonObject& gpio) {
+  if (gpio.containsKey("mode")) {
+    configChanged = true;
+    strcpy(mode, gpio["mode"]);
+  }
+  if (gpio.containsKey("value")) {
+    configChanged = true;
+    strcpy(value, gpio["value"]);
+  }
+  int modeSize = strlen(mode);
+  char pinBuffer[3];
+  for (int i = 0; i < modeSize; ++i) {
+    int gpioNumber = GPIO_NUMBER[i];
+    if (mode[i] == 's') {
+      itoa(gpioNumber,pinBuffer,10);
+      if (gpio.containsKey(pinBuffer)) {
+        configChanged = true;
+        makeDevicePinPairing(gpioNumber, gpio[pinBuffer].asString());
+      }
     }
   }
 }
