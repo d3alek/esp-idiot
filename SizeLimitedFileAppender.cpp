@@ -46,12 +46,17 @@ size_t SizeLimitedFileAppender::write(uint8_t c) {
       yield();
     }
     _file.close();
+    temp.close();
     SPIFFS.remove(_fileName);
     SPIFFS.rename(TEMP_FILE, _fileName);
-    _file = temp;
+    open(_fileName, _sizeLimitInBytes);
   }
   size_t res = _file.write(c);
   _fileSize += res;
+  if (res == 0) {
+    close();
+    return open(_fileName, _sizeLimitInBytes);
+  }
   return res;
 }
 

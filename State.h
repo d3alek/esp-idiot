@@ -2,8 +2,7 @@
 #define STATE_H
 
 #define FOREACH_STATE(STATE) \
-            STATE(boot)   \
-        STATE(setup_wifi)  \
+        STATE(boot)   \
         STATE(connect_to_wifi) \
         STATE(connect_to_mqtt) \
         STATE(serve_locally) \

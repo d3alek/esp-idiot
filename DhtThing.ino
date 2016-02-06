@@ -1,9 +1,8 @@
-#define VERSION 34.8
+#define VERSION "35.28"
 
 #include <Arduino.h>
 
 #include <ESP8266WiFi.h>
-#include <ESP8266WiFiMulti.h>
 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
@@ -37,8 +36,6 @@ ADC_MODE(ADC_VCC);
 Ticker tickerOSWatch;
 static unsigned long last_loop;
 
-#define DHT22_CHIP_ID 320929
-#define DHTPIN  2
 #define DEFAULT_SLEEP_SECONDS 60*15
 #define HARD_RESET_PIN 0
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
@@ -52,6 +49,8 @@ static unsigned long last_loop;
 
 #define ELEVEN_DASHES "-----------"
 
+#define DELTA_WAIT_SECONDS 2
+
 const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
@@ -64,7 +63,6 @@ const char uuidPrefix[] = "ESP";
 #include "MQTTConfig.h"
 
 WiFiClient wclient;
-ESP8266WiFiMulti WiFiMulti;
 PubSubClient mqttClient(wclient);
 
 float voltage = NAN;
@@ -108,6 +106,7 @@ void ICACHE_RAM_ATTR osWatch(void) {
     unsigned long t = millis();
     unsigned long last_run = abs(t - last_loop);
     if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
+      Logger.println("osWatch: restart");
       // save the hit here to eeprom or to rtc memory if needed
         ESP.restart();  // normal reboot 
         //ESP.reset();  // hard reset
@@ -118,41 +117,35 @@ void toState(int newState) {
   if (state == newState) {
     return;
   }
-  Logger.println();
-  Logger.print("[");
-  Logger.print(STATE_STRING[state]);
-  Logger.print("] -> [");
-  Logger.print(STATE_STRING[newState]);
-  Logger.println("]");
-  Logger.println();
+  Logger.printf("\n[%s] -> [%s]\n", STATE_STRING[state], STATE_STRING[newState]);
   state = newState;
 }
 
-const char* updateFromS3(char* updatePath) {
+void updateFromS3(char* updatePath) {
   toState(ota_update);
-  char updateUrl[100] = "http://idiot-esp.s3-website-eu-west-1.amazonaws.com/updates/";
+  char updateUrl[100];
+  strcpy(updateUrl, "http://idiot-esp.s3-website-eu-west-1.amazonaws.com/updates/");
   strcat(updateUrl, updatePath);
   Logger.print("Starting OTA update: ");
   Logger.println(updateUrl);
   t_httpUpdate_return ret = ESPhttpUpdate.update(updateUrl);
 
-  Logger.print("OTA update finished: ");
-  Logger.println(ret);
+  Logger.printf("OTA update finished: %d\n", ret);
   switch(ret) {
       case HTTP_UPDATE_FAILED:
-          Logger.println("HTTP_UPDATE_FAILED");
-          return "HTTP_UPDATE_FAILED";
+          Logger.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+          break;
 
       case HTTP_UPDATE_NO_UPDATES:
           Logger.println("HTTP_UPDATE_NO_UPDATES");
-          return "HTTP_UPDATE_NO_UPDATES";
+          break;
 
       case HTTP_UPDATE_OK:
           Logger.println("HTTP_UPDATE_OK");
-          return "HTTP_UPDATE_OK";
+          break;
   }
-
-  return "HTTP_UPDATE_UNKNOWN_RETURN_CODE";
+  
+  return;
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -165,14 +158,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   normalizedPayload[length]='\0';
   Logger.println(normalizedPayload);
-  if (strcmp(topic, updateTopic) == 0) {
-    unsigned char emptyMessage[0];
-    mqttClient.publish(updateTopic, emptyMessage, 0, true);
-    mqttClient.publish(updateResultTopic, updateFromS3(normalizedPayload), true);
-  }
-  else {
-    loadConfig(normalizedPayload);
-  }
+  loadConfig(normalizedPayload);
 }
 
 // Appends UUID to topic prefix and saves it in topic. Using separate
@@ -223,6 +209,11 @@ void loopResetButton() {
   }
 }
 
+long updateConfigStartTime;
+long serveLocallyStartMs;
+#define DEFAULT_SERVE_LOCALLY_SECONDS 2
+float serveLocallySeconds;
+
 void setup(void)
 {
   last_loop = millis();
@@ -233,18 +224,11 @@ void setup(void)
   Logger.setDebugOutput(true); 
   
   sprintf(uuid, "%s-%d", uuidPrefix, chipId);
-  Logger.print("UUID: ");
-  Logger.println(uuid);
-  Logger.print("VERSION: ");
-  Logger.println(VERSION);
-  Logger.println("FS info:");
+  Logger.printf("UUID: %s VERSION: %s\n", uuid, VERSION);
   FSInfo fsInfo;
   SPIFFS.info(fsInfo);
 
-  Logger.print("Used bytes: ");
-  Logger.println(fsInfo.usedBytes);
-  Logger.print(" Total bytes: ");
-  Logger.println(fsInfo.totalBytes); 
+  Logger.printf("Used bytes: %d Total bytes: %d\n", fsInfo.usedBytes, fsInfo.totalBytes);
 
   // GPIO init
   strcpy(mode, ELEVEN_DASHES);
@@ -253,15 +237,12 @@ void setup(void)
   PersistentStore.begin();
   setupResetButton();
   
-  WiFi.mode(WIFI_AP_STA);
-}
+  WiFi.mode(WIFI_STA);
 
-void mqttLoop(int seconds) {
-  long startTime = millis();
-  while (millis() - startTime < seconds*1000) {
-    mqttClient.loop();
-    delay(100); 
-  }
+  updateConfigStartTime = 0;
+
+  serveLocallyStartMs = 0;
+  serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
 }
 
 void loop(void)
@@ -273,12 +254,26 @@ void loop(void)
   
   if (state == boot) {
     if (!PersistentStore.wifiCredentialsStored()) {
-      toState(setup_wifi);
-      idiotWifiServer.start(uuid, LOCAL_PUBLISH_FILE, Logger);
-      return;
+      toState(serve_locally);
+      serveLocallySeconds = 60;
     }
     else {
       toState(connect_to_wifi);
+    }
+
+    return;
+  }
+  else if (state == serve_locally) {
+    if (serveLocallyStartMs == 0) {
+      WiFi.mode(WIFI_AP);
+      idiotWifiServer.start(uuid, LOCAL_PUBLISH_FILE, Logger);
+      serveLocallyStartMs = millis();
+      Logger.print("Serving locally for ");
+      Logger.print(serveLocallySeconds);
+      Logger.println(" seconds");
+    }
+    else if (millis() - serveLocallyStartMs > serveLocallySeconds * 1000) {
+      toState(deep_sleep);
     }
     return;
   }
@@ -289,8 +284,15 @@ void loop(void)
     char wifiPassword[50];
     PersistentStore.readWifiPassword(wifiPassword);
     Logger.println(wifiPassword);
+
+    if (strcmp(WiFi.SSID().c_str(), wifiName) || strcmp(WiFi.psk().c_str(), wifiPassword)) {
+      Logger.printf("Connecting to %s for the first time\n", wifiName);
+      WiFi.begin(wifiName, wifiPassword);
+    }
+    else {
+      WiFi.begin();
+    }
     
-    WiFi.begin(wifiName, wifiPassword);
     int wifiConnectResult = WiFi.waitForConnectResult();
     
     if (wifiConnectResult == WL_CONNECTED) {
@@ -301,7 +303,7 @@ void loop(void)
         delay(1000);
       }
       else {
-        toState(serve_locally); 
+        toState(load_config); 
       }      
     }
     return;
@@ -310,17 +312,7 @@ void loop(void)
     while (mqttConnectAttempts++ < MAX_MQTT_CONNECT_ATTEMPTS && !mqttConnect()) { 
       delay(1000);
     }
-    mqttLoop(2); // wait 2 seconds for update messages to go through
-    toState(serve_locally);
-    return;
-  }
-  else if (state == serve_locally) {
-    idiotWifiServer.start(uuid, LOCAL_PUBLISH_FILE, Logger);
     toState(load_config);
-    return;
-  }
-  
-  if (state == setup_wifi) {
     return;
   }
   else if (state == load_config) {
@@ -336,14 +328,22 @@ void loop(void)
     }
   }
   else if (state == update_config) { 
-    requestState();
-    configChanged = false;
-    mqttLoop(1); // wait 1 second for delta to go through
+    if (updateConfigStartTime == 0) {
+      requestState();
+      updateConfigStartTime = millis();
+      configChanged = false;
+    }
+    
     if (configChanged) {
       Logger.println("Config changed.");
       saveConfig();
       yield();
     }
+    else if (millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
+      mqttClient.loop();
+      return; // do not move to next state yet
+    }
+    
     toState(process_gpio);
   }
   else if (state == local_update_config) {
@@ -361,19 +361,12 @@ void loop(void)
       if (mode[i] == 'i') {
         pinMode(gpioNumber, INPUT);
         value[i] = digitalRead(gpioNumber) == HIGH ? 'h' : 'l';
-        Logger.print("INPUT GPIO");
-        Logger.print(gpioNumber);
-        Logger.print(" ");
-        Logger.println(value[i]);
+        Logger.printf("INPUT GPIO%d %c\n", gpioNumber, value[i]);
       }
       else if (mode[i] == 'o') {
         pinMode(gpioNumber, OUTPUT);
         digitalWrite(gpioNumber, value[i] == 'h' ? HIGH : LOW);
-        Logger.print("OUTPUT GPIO");
-        Logger.print(gpioNumber);
-        Logger.print(" ");
-        Logger.print(value[i]);
-        Logger.println(" for 1 second");
+        Logger.printf("OUTPUT GPIO%d %c for 1 second\n", gpioNumber, value[i]);
         delay(1000);
         digitalWrite(gpioNumber, value[i] == 'h' ? LOW : HIGH);
       }
@@ -388,8 +381,7 @@ void loop(void)
       DHT dht11(dht11Pin, DHT11);
       dht11.begin();
       int attempts = 0;
-      Serial.print("Reading DHT11 from pin ");
-      Serial.println(dht11Pin);
+      Serial.printf("Reading DHT11 from pin %d\n", dht11Pin);
       while (!readTemperatureHumidity("DHT11", dht11, senses) && attempts < 3) {
         delay(2000);
         attempts++;
@@ -400,8 +392,7 @@ void loop(void)
       DHT dht22(dht22Pin, DHT22);
       dht22.begin();
       int attempts = 0;
-      Serial.print("Reading DHT22 from pin ");
-      Serial.println(dht22Pin);
+      Serial.printf("Reading DHT22 from pin %d\n", dht22Pin);
       while (!readTemperatureHumidity("DHT22", dht22, senses) && attempts < 3) {
         delay(2000);
         attempts++;
@@ -413,9 +404,8 @@ void loop(void)
     }
 
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
-    Logger.print("readSensesResult: ");
-    Logger.println(readSensesResult);
-
+    Logger.printf("readSensesResult: %s\n", readSensesResult);
+    
     readInternalVoltage();
     
     toState(local_publish);
@@ -432,7 +422,7 @@ void loop(void)
       toState(publish);
     }
     else {
-      toState(deep_sleep);
+      toState(serve_locally);
     }
   }
   else if (state == publish) {
@@ -449,9 +439,11 @@ void loop(void)
     unsigned long awakeMillis = millis();
     Logger.println(awakeMillis);
 
-    toState(deep_sleep);
+    toState(serve_locally);
   }
   else if (state == deep_sleep) {
+    Logger.flush();
+    Logger.close();
     EspControl.deepSleep(sleepSeconds);
   }
 }
@@ -525,6 +517,20 @@ void loadConfig(char* string) {
 }
 
 void loadConfig(JsonObject& config) {
+  if (config.containsKey("version")) {
+    const char* version = config["version"];
+    if (strcmp(version, VERSION) == 0) {
+      Logger.println("Already the correct version. Ignoring update delta.");
+    }
+    else {
+      char fileName[30];
+      strcpy(fileName, "idiot-esp-");
+      strcat(fileName, version);
+      strcat(fileName, ".bin");
+      updateFromS3(fileName);
+      ESP.restart();
+    }
+  }
   if (config.containsKey("sleep")) {
     configChanged = true;
     sleepSeconds = atoi(config["sleep"]);
