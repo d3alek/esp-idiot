@@ -216,6 +216,7 @@ float serveLocallySeconds;
 
 void setup(void)
 {
+  Serial.println("Setup starting");
   last_loop = millis();
   tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
     
@@ -278,10 +279,10 @@ void loop(void)
     return;
   }
   else if (state == connect_to_wifi) {
-    char wifiName[50];
+    char wifiName[WIFI_NAME_MAX_SIZE];
     PersistentStore.readWifiName(wifiName);
     Logger.println(wifiName);
-    char wifiPassword[50];
+    char wifiPassword[WIFI_PASS_MAX_SIZE];
     PersistentStore.readWifiPassword(wifiPassword);
     Logger.println(wifiPassword);
 

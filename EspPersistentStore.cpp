@@ -30,16 +30,6 @@ void EspPersistentStore::_putString(int startingOffset, const char* string) {
   EEPROM.commit();
 }
 
-void EspPersistentStore::_readString(int startingOffset, char* string) {
-  if (!began) {
-    Serial.println("Begin should be called first");
-  }
-  int i = 0;
-  do {
-    string[i] = EEPROM.read(startingOffset + i);
-  } while (string[i++] != '\0');
-}
-
 void EspPersistentStore::_readString(int startingOffset, char* string, int maxSize) {
   if (!began) {
     Serial.println("Begin should be called first");
@@ -91,7 +81,7 @@ void EspPersistentStore::readWifiName(char* wifiName) {
     wifiName = NULL;
   }
 
-  _readString(WIFI_NAME_OFFSET, wifiName);
+  _readString(WIFI_NAME_OFFSET, wifiName, WIFI_NAME_MAX_SIZE);
 }
 
 void EspPersistentStore::readWifiPassword(char* wifiPassword) {
@@ -100,7 +90,7 @@ void EspPersistentStore::readWifiPassword(char* wifiPassword) {
     wifiPassword = NULL;
   }
 
-  _readString(WIFI_PASSWORD_OFFSET, wifiPassword);
+  _readString(WIFI_PASSWORD_OFFSET, wifiPassword, WIFI_PASS_MAX_SIZE);
 }
 
 bool EspPersistentStore::wifiCredentialsStored() {
