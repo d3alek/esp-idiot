@@ -1,4 +1,4 @@
-#define VERSION "35.28"
+#define VERSION "37.1"
 
 #include <Arduino.h>
 
@@ -437,12 +437,12 @@ void loop(void)
     mqttClient.publish(topic, finalState);
     yield();
     
-    unsigned long awakeMillis = millis();
-    Logger.println(awakeMillis);
-
     toState(serve_locally);
   }
   else if (state == deep_sleep) {
+    PersistentStore.putLastAwake(millis());
+    Logger.println(millis());
+    
     Logger.flush();
     Logger.close();
     EspControl.deepSleep(sleepSeconds);
@@ -672,7 +672,8 @@ void buildStateString(char* stateJson) {
   reported["version"] = VERSION;
   reported["wifi"] = WiFi.SSID();
   reported["state"] = STATE_STRING[state];
-
+  reported["lawake"] = PersistentStore.readLastAwake();
+  
   JsonObject& config = reported.createNestedObject("config");
 
   injectConfig(config);

@@ -9,6 +9,8 @@
 #define WIFI_PASSWORD_OFFSET 150
 #define CONFIG_OFFSET 200
 
+#define LAST_AWAKE_OFFSET CONFIG_OFFSET+CONFIG_MAX_SIZE+1
+
 #define WIFI_NAME_STORED_BIT 1
 #define WIFI_PASSWORD_STORED_BIT 2
 
@@ -22,6 +24,8 @@ class EspPersistentStore {
       void readWifiPassword(char* wifiPassword);
       void readConfig(char* config);
       bool wifiCredentialsStored();
+      void putLastAwake(unsigned long);
+      unsigned long readLastAwake();
       void clear();
   private:
     void _putString(int startingOffset, const char* string);
