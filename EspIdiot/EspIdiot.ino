@@ -1,4 +1,4 @@
-#define VERSION "38"
+#define VERSION "39"
 
 #include <Arduino.h>
 
@@ -50,6 +50,10 @@ static unsigned long last_loop;
 #define ELEVEN_DASHES "-----------"
 
 #define DELTA_WAIT_SECONDS 2
+
+#define DEFAULT_PUBLISH_INTERVAL 600
+
+unsigned long publishInterval;
 
 const int chipId = ESP.getChipId();
 
@@ -213,6 +217,7 @@ void loopResetButton() {
   }
 }
 
+unsigned long lastPublishedAtMillis;
 long updateConfigStartTime;
 long serveLocallyStartMs;
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
@@ -248,6 +253,8 @@ void setup(void)
 
   serveLocallyStartMs = 0;
   serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
+  lastPublishedAtMillis = 0;
+  publishInterval = DEFAULT_PUBLISH_INTERVAL;
 }
 
 void loop(void)
@@ -414,6 +421,9 @@ void loop(void)
       IdiotOneWire.readOneWire(Logger, oneWirePin, senses);
     }
 
+    // TODO: here iterate over senses, check wheather the sense has an associated action and change the GPIO state
+    // according to the value
+    // maybe divide into a separate state, leave trace in state json of the actions done.
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
     
@@ -422,18 +432,25 @@ void loop(void)
     toState(local_publish);
   }
   else if (state == local_publish) {
-    buildStateString(finalState);
-    yield();
-    SizeLimitedFileAppender localPublishFile;
-    localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES);
-    localPublishFile.println(finalState);
-    yield();
-    localPublishFile.close();
-    if (mqttClient.state() == MQTT_CONNECTED) {
-      toState(publish);
+    if (lastPublishedAtMillis != 0 && millis() - lastPublishedAtMillis < publishInterval) {
+      Logger.println("Skip publishing as published recently.");
+      toState(serve_locally);
     }
     else {
-      toState(serve_locally);
+      buildStateString(finalState);
+      yield();
+      SizeLimitedFileAppender localPublishFile;
+      localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES);
+      localPublishFile.println(finalState);
+      yield();
+      localPublishFile.close();
+      lastPublishedAtMillis = millis();
+      if (mqttClient.state() == MQTT_CONNECTED) {
+        toState(publish);
+      }
+      else {
+        toState(serve_locally);
+      }
     }
   }
   else if (state == publish) {
