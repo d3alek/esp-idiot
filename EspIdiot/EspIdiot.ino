@@ -1,4 +1,4 @@
-#define VERSION "37.1"
+#define VERSION "38"
 
 #include <Arduino.h>
 
@@ -169,6 +169,10 @@ void constructTopicName(char* topic, const char* topicPrefix) {
 }
 
 bool mqttConnect() {
+  if (mqttClient.connected()) {
+    Logger.println("MQTT already connected.");
+    return true;
+  }
   Logger.print("MQTT ");
   mqttClient.setServer(mqttHostname, mqttPort).setCallback(mqttCallback);
   if (mqttClient.connect(uuid, mqttUser, mqttPassword)) {
@@ -279,6 +283,12 @@ void loop(void)
     return;
   }
   else if (state == connect_to_wifi) {
+    int wifiConnectResult = WiFi.waitForConnectResult();
+    
+    if (wifiConnectResult == WL_CONNECTED) {
+      toState(connect_to_mqtt);
+    }
+    
     char wifiName[WIFI_NAME_MAX_SIZE];
     PersistentStore.readWifiName(wifiName);
     Logger.println(wifiName);
@@ -294,7 +304,7 @@ void loop(void)
       WiFi.begin();
     }
     
-    int wifiConnectResult = WiFi.waitForConnectResult();
+    wifiConnectResult = WiFi.waitForConnectResult();
     
     if (wifiConnectResult == WL_CONNECTED) {
       toState(connect_to_mqtt);
@@ -442,6 +452,11 @@ void loop(void)
   else if (state == deep_sleep) {
     PersistentStore.putLastAwake(millis());
     Logger.println(millis());
+
+    if (sleepSeconds == 0) {
+      toState(boot);
+      return;
+    }
     
     Logger.flush();
     Logger.close();
@@ -552,8 +567,7 @@ void loadConfig(JsonObject& config) {
       Logger.println(it->key);
       Logger.println(it->value.asString());
 
-      Action action;
-      strcpy(action.sense, it->key);
+      Action action(it->key);
       JsonObject& actionDetails = it->value.asObject();
       if (actionDetails == JsonObject::invalid()) {
         Logger.println("ERROR: Could not parse action details");
@@ -563,11 +577,20 @@ void loadConfig(JsonObject& config) {
       {
         Logger.println(it2->key);
         Logger.println(it2->value.asString());
-        parseThresholdDeltaString(it2->key, action);
+        action.parseThresholdDeltaString(it2->key);
+        parseGpios(it2->value.asArray(), &action);
       }
+      actions[actionsSize] = action;
       actionsSize++;
     }
   } 
+}
+
+void parseGpios(JsonArray& gpioArray, Action* action) {
+  int arraySize = gpioArray.size();
+  for (int i = 0; i < arraySize; ++i) {
+    action->addGpio(gpioArray[i]);
+  }
 }
 
 void loadGpioConfig(JsonObject& gpio) {
@@ -643,23 +666,14 @@ void saveConfig() {
 void injectActions(JsonObject& actionsJson) {
   for (int i = 0; i < actionsSize; ++i) {
     Action action = actions[i];
-    JsonObject& thisActionJson = actionsJson.createNestedObject(action.sense);
+    JsonObject& thisActionJson = actionsJson.createNestedObject(action.getSense());
     char thresholdDeltaString[20];
-    buildThresholdDeltaString(thresholdDeltaString, action.threshold, action.delta);
+    Action::buildThresholdDeltaString(thresholdDeltaString, action.getThreshold(), action.getDelta());
     JsonArray& gpios = thisActionJson.createNestedArray(thresholdDeltaString);
-    for (int j = 0; j < action.gpiosSize; ++j) {
-      gpios.add(action.gpios[j]);
+    for (int j = 0; j < action.getGpiosSize(); ++j) {
+      gpios.add(action.getGpio(j));
     } 
   }
-}
-
-void buildThresholdDeltaString(char* thresholdDeltaString, float threshold, float delta) {
-  sprintf(thresholdDeltaString, "%.2f~%.2f", threshold, delta);
-}
-
-void parseThresholdDeltaString(const char* thresholdDeltaString, Action action) {
-  action.threshold = 0;
-  action.delta = 0;
 }
 
 void buildStateString(char* stateJson) {
