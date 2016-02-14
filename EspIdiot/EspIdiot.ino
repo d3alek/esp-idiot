@@ -1,4 +1,4 @@
-#define VERSION "40.9"
+#define VERSION "40.12"
 
 #include <Arduino.h>
 
@@ -51,7 +51,7 @@ static unsigned long last_loop;
 
 #define DELTA_WAIT_SECONDS 2
 
-#define DEFAULT_PUBLISH_INTERVAL 600
+#define DEFAULT_PUBLISH_INTERVAL 60
 
 unsigned long publishInterval;
 
@@ -260,6 +260,8 @@ void setup(void)
   
   PersistentStore.begin();
   setupResetButton();
+  
+  lastPublishedAtMillis = 0;
 }
 
 void loop(void)
@@ -275,7 +277,6 @@ void loop(void)
 
     serveLocallyStartMs = 0;
     serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
-    lastPublishedAtMillis = 0;
     publishInterval = DEFAULT_PUBLISH_INTERVAL;
     actionsSize = 0;
     if (!PersistentStore.wifiCredentialsStored()) {
@@ -528,6 +529,8 @@ void ensureGpio(int gpio, int state) {
     
     pinMode(gpio, OUTPUT);
     digitalWrite(gpio, state);
+
+    configChanged = true;
   }
 }
 
