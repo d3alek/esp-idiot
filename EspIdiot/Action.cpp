@@ -6,8 +6,8 @@
 
 #include "Action.h"
 
-void Action::buildThresholdDeltaString(char* thresholdDeltaString, float threshold, float delta) {
-  sprintf(thresholdDeltaString, "%.1f~%.1f", threshold, delta);
+void Action::buildThresholdDeltaString(char* thresholdDeltaString, int threshold, int delta) {
+  sprintf(thresholdDeltaString, "%d~%d", threshold, delta);
 }
 
 void Action::parseThresholdDeltaString(const char* thresholdDeltaString) {
@@ -36,8 +36,8 @@ void Action::parseThresholdDeltaString(const char* thresholdDeltaString) {
   _delta = atoi(buffer);
 }
 
-void Action::addGpio(int gpio) {
-  _gpios[_gpiosSize++] = gpio;
+void Action::setGpio(int gpio) {
+  _gpio = gpio;
 }
 
 const char* Action::getSense() {
@@ -57,23 +57,41 @@ void Action::_init() {
   strcpy(_sense,"");
   _delta = 0;
   _threshold = 0;
-  _gpiosSize = 0;
 }
 
-float Action::getThreshold() {
+int Action::getThreshold() {
   return _threshold;
 }
 
-float Action::getDelta() {
+int Action::getDelta() {
   return _delta;
 }
 
-int Action::getGpiosSize() {
-  return _gpiosSize;
+int Action::getGpio() {
+  return _gpio;
 }
 
-int Action::getGpio(int index) {
-  return _gpios[index];
+void Action::fromConfig(const char* senseAndGpioString, const char* thresholdDeltaString, Action* action) {
+  action->parseSenseAndGpio(senseAndGpioString);
+  action->parseThresholdDeltaString(thresholdDeltaString);
 }
 
+void Action::parseSenseAndGpio(const char* senseAndGpioString) {
+  // string begins with A| which stands for Action - skip the first 2 characters then
+  int stringLength = strlen(senseAndGpioString);
+  const char* gpioBegin = strchr(senseAndGpioString+2, (int)'|') + 1;
+  int senseLength = gpioBegin-senseAndGpioString-3;
+  strncpy(_sense, senseAndGpioString+2, senseLength);
+  _sense[senseLength]='\0';
+  _gpio = atoi(gpioBegin);
+}
+
+void Action::buildSenseAndGpioString(char* senseAndGpioString) {
+  strcpy(senseAndGpioString, "A|");
+  strcat(senseAndGpioString, _sense);
+  strcat(senseAndGpioString, "|");
+  char buf[4];
+  sprintf(buf, "%d", _gpio);
+  strcat(senseAndGpioString, buf);
+}
 

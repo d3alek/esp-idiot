@@ -5,22 +5,23 @@ class Action {
   public:
     Action();
     Action(const char*);
-    static void buildThresholdDeltaString(char*, float, float);
-    
+    static void buildThresholdDeltaString(char*, int, int);
+    static void fromConfig(const char*, const char*, Action*);
     void parseThresholdDeltaString(const char*);
-    void addGpio(int);
+    void buildSenseAndGpioString(char*);
+    void setGpio(int);
     
     const char* getSense();
-    float getThreshold();
-    float getDelta();
-    int getGpiosSize();
-    int getGpio(int);
+    int getThreshold();
+    int getDelta();
+    int getGpio();
+    
+    void parseSenseAndGpio(const char*);
   private:
-    char _sense[15];
-    float _delta;
-    float _threshold;
-    int _gpios[10];
-    int _gpiosSize;
+    char _sense[30];
+    int _delta;
+    int _threshold;
+    int _gpio;
 
     void _init();
 };

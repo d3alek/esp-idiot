@@ -110,7 +110,7 @@ void serveLogs() {
   int sentSize = client.write(logFile, HTTP_DOWNLOAD_UNIT_SIZE);
   
   logFile.close();
-  _logger.begin(115200);
+  _logger.begin();
   if (sentSize != logFileSize) {
     _logger.println("Sent different data length than expected");
     _logger.print("Expected: "); _logger.println(logFileSize);

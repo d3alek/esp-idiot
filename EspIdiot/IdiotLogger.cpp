@@ -3,13 +3,7 @@
 IdiotLogger::IdiotLogger() {
 }
 
-void IdiotLogger::setDebugOutput(bool debugOutput) {
-  Serial.setDebugOutput(debugOutput);
-}
-
-void IdiotLogger::begin(long baud) {
-  Serial.begin(baud);
-  Serial.println();
+void IdiotLogger::begin() {
   _logFile.open(LOG_FILE, MAX_LOG_FILE_SIZE); // make sure SPIFFS.begin() is called before that.
   if (!_logFile.valid()) {
     Serial.println("IdiotLogger: no valid log file specified. Logging only to Serial.");

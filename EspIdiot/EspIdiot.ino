@@ -1,4 +1,4 @@
-#define VERSION "39"
+#define VERSION "39.32"
 
 #include <Arduino.h>
 
@@ -103,7 +103,7 @@ char readSensesResult[MAX_READ_SENSES_RESULT_SIZE];
 
 char finalState[MAX_STATE_JSON_LENGTH];
 
-Action actions[30];
+Action actions[10];
 int actionsSize = 0;
 
 void ICACHE_RAM_ATTR osWatch(void) {
@@ -218,20 +218,34 @@ void loopResetButton() {
 }
 
 unsigned long lastPublishedAtMillis;
-long updateConfigStartTime;
-long serveLocallyStartMs;
+unsigned long updateConfigStartTime;
+unsigned long serveLocallyStartMs;
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 float serveLocallySeconds;
 
 void setup(void)
 {
-  Serial.println("Setup starting");
-  last_loop = millis();
-  tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
-    
+  Serial.begin(115200);
+  Serial.setDebugOutput(true);
+  Serial.println();
   SPIFFS.begin();
-  Logger.begin(115200);
-  Logger.setDebugOutput(true); 
+  
+  if (ESP.getResetReason().equals("Hardware Watchdog")) {
+    Serial.println("Clearing state because Hardware Watchdog reset detected.");
+    SPIFFS.format();
+    ESP.eraseConfig();
+    ESP.reset();
+  }
+  
+  last_loop = millis();
+  //tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
+  
+  Logger.begin();
+
+  Serial.println(ESP.getResetReason());
+  Serial.println(ESP.getResetInfo());
+
+  Serial.println("Setup starting");
   
   sprintf(uuid, "%s-%d", uuidPrefix, chipId);
   Logger.printf("UUID: %s VERSION: %s\n", uuid, VERSION);
@@ -247,8 +261,6 @@ void setup(void)
   PersistentStore.begin();
   setupResetButton();
   
-  WiFi.mode(WIFI_STA);
-
   updateConfigStartTime = 0;
 
   serveLocallyStartMs = 0;
@@ -277,6 +289,7 @@ void loop(void)
   }
   else if (state == serve_locally) {
     if (serveLocallyStartMs == 0) {
+      WiFi.disconnect();
       WiFi.mode(WIFI_AP);
       idiotWifiServer.start(uuid, LOCAL_PUBLISH_FILE, Logger);
       serveLocallyStartMs = millis();
@@ -287,42 +300,47 @@ void loop(void)
     else if (millis() - serveLocallyStartMs > serveLocallySeconds * 1000) {
       toState(deep_sleep);
     }
+    else {
+      delay(10);
+    }
     return;
   }
   else if (state == connect_to_wifi) {
+    WiFi.mode(WIFI_STA);
     int wifiConnectResult = WiFi.waitForConnectResult();
     
     if (wifiConnectResult == WL_CONNECTED) {
       toState(connect_to_mqtt);
     }
-    
-    char wifiName[WIFI_NAME_MAX_SIZE];
-    PersistentStore.readWifiName(wifiName);
-    Logger.println(wifiName);
-    char wifiPassword[WIFI_PASS_MAX_SIZE];
-    PersistentStore.readWifiPassword(wifiPassword);
-    Logger.println(wifiPassword);
-
-    if (strcmp(WiFi.SSID().c_str(), wifiName) || strcmp(WiFi.psk().c_str(), wifiPassword)) {
-      Logger.printf("Connecting to %s for the first time\n", wifiName);
-      WiFi.begin(wifiName, wifiPassword);
-    }
     else {
-      WiFi.begin();
-    }
-    
-    wifiConnectResult = WiFi.waitForConnectResult();
-    
-    if (wifiConnectResult == WL_CONNECTED) {
-      toState(connect_to_mqtt);
-    }
-    else {
-      if (wifiConnectAttempts++ < MAX_WIFI_CONNECTED_ATTEMPTS) {
-        delay(1000);
+      char wifiName[WIFI_NAME_MAX_SIZE];
+      PersistentStore.readWifiName(wifiName);
+      Logger.println(wifiName);
+      char wifiPassword[WIFI_PASS_MAX_SIZE];
+      PersistentStore.readWifiPassword(wifiPassword);
+      Logger.println(wifiPassword);
+  
+      if (strcmp(WiFi.SSID().c_str(), wifiName) || strcmp(WiFi.psk().c_str(), wifiPassword)) {
+        Logger.printf("Connecting to %s for the first time\n", wifiName);
+        WiFi.begin(wifiName, wifiPassword);
       }
       else {
-        toState(load_config); 
-      }      
+        WiFi.begin();
+      }
+      
+      wifiConnectResult = WiFi.waitForConnectResult();
+      
+      if (wifiConnectResult == WL_CONNECTED) {
+        toState(connect_to_mqtt);
+      }
+      else {
+        if (wifiConnectAttempts++ < MAX_WIFI_CONNECTED_ATTEMPTS) {
+          delay(1000);
+        }
+        else {
+          toState(load_config); 
+        }      
+      }
     }
     return;
   }
@@ -352,17 +370,13 @@ void loop(void)
       configChanged = false;
     }
     
-    if (configChanged) {
-      Logger.println("Config changed.");
-      saveConfig();
-      yield();
-    }
-    else if (millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
+    if (!configChanged && millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
       mqttClient.loop();
       return; // do not move to next state yet
     }
-    
-    toState(process_gpio);
+    else {
+      toState(process_gpio);
+    }
   }
   else if (state == local_update_config) {
     if (localUpdateWaits++ < LOCAL_UPDATE_WAITS) {
@@ -432,24 +446,28 @@ void loop(void)
     toState(local_publish);
   }
   else if (state == local_publish) {
-    if (lastPublishedAtMillis != 0 && millis() - lastPublishedAtMillis < publishInterval) {
+    if (!configChanged && lastPublishedAtMillis != 0 && millis() - lastPublishedAtMillis < publishInterval*1000) {
       Logger.println("Skip publishing as published recently.");
-      toState(serve_locally);
+      toState(deep_sleep);
     }
     else {
       buildStateString(finalState);
       yield();
       SizeLimitedFileAppender localPublishFile;
-      localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES);
-      localPublishFile.println(finalState);
-      yield();
-      localPublishFile.close();
-      lastPublishedAtMillis = millis();
+      if (!localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES)) {
+        Logger.println("Could not open local publish file. Skipping local_publish.");
+      }
+      else {
+        localPublishFile.println(finalState);
+        yield();
+        localPublishFile.close();
+        lastPublishedAtMillis = millis();
+      }
       if (mqttClient.state() == MQTT_CONNECTED) {
         toState(publish);
       }
       else {
-        toState(serve_locally);
+        toState(deep_sleep);
       }
     }
   }
@@ -462,15 +480,18 @@ void loop(void)
     Logger.print("Publishing to ");
     Logger.println(topic);
     mqttClient.publish(topic, finalState);
+    lastPublishedAtMillis = millis();
     yield();
     
-    toState(serve_locally);
+    toState(deep_sleep);
   }
   else if (state == deep_sleep) {
     PersistentStore.putLastAwake(millis());
     Logger.println(millis());
 
     if (sleepSeconds == 0) {
+      configChanged = false;
+      updateConfigStartTime = 0;
       toState(boot);
       return;
     }
@@ -553,6 +574,7 @@ void loadConfig(JsonObject& config) {
   if (config.containsKey("version")) {
     const char* version = config["version"];
     if (strcmp(version, VERSION) == 0) {
+      configChanged = true; // to push the new version to the cloud, notifying of the successful update
       Logger.println("Already the correct version. Ignoring update delta.");
     }
     else {
@@ -575,38 +597,18 @@ void loadConfig(JsonObject& config) {
   else {
     loadGpioConfig(config); // buggy IoT json
   }
-  
-  if (config.containsKey("actions")) {
-    configChanged = true;
-    JsonObject& actionsJson = config["actions"];
-    for (JsonObject::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
-    {
-      Logger.println(it->key);
-      Logger.println(it->value.asString());
 
-      Action action(it->key);
-      JsonObject& actionDetails = it->value.asObject();
-      if (actionDetails == JsonObject::invalid()) {
-        Logger.println("ERROR: Could not parse action details");
-        continue;
-      }
-      for (JsonObject::iterator it2=actionDetails.begin(); it2!=actionDetails.end(); ++it2)
-      {
-        Logger.println(it2->key);
-        Logger.println(it2->value.asString());
-        action.parseThresholdDeltaString(it2->key);
-        parseGpios(it2->value.asArray(), &action);
-      }
+  for (JsonObject::iterator it=config.begin(); it!=config.end(); ++it)
+  {
+    const char* key = it->key;
+    if (key[0] == 'A' && key[1] == '|') {
+      configChanged = true;
+      Action action;
+      Action::fromConfig(key, it->value, &action);
+      
       actions[actionsSize] = action;
       actionsSize++;
     }
-  } 
-}
-
-void parseGpios(JsonArray& gpioArray, Action* action) {
-  int arraySize = gpioArray.size();
-  for (int i = 0; i < arraySize; ++i) {
-    action->addGpio(gpioArray[i]);
   }
 }
 
@@ -683,13 +685,11 @@ void saveConfig() {
 void injectActions(JsonObject& actionsJson) {
   for (int i = 0; i < actionsSize; ++i) {
     Action action = actions[i];
-    JsonObject& thisActionJson = actionsJson.createNestedObject(action.getSense());
     char thresholdDeltaString[20];
     Action::buildThresholdDeltaString(thresholdDeltaString, action.getThreshold(), action.getDelta());
-    JsonArray& gpios = thisActionJson.createNestedArray(thresholdDeltaString);
-    for (int j = 0; j < action.getGpiosSize(); ++j) {
-      gpios.add(action.getGpio(j));
-    } 
+    char senseAndGpioString[30];
+    action.buildSenseAndGpioString(senseAndGpioString);
+    actionsJson[String(senseAndGpioString)] = String(thresholdDeltaString);
   }
 }
 

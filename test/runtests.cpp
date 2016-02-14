@@ -25,9 +25,9 @@ using namespace std;
 
 bool assertAction(Action, float, float);
 void buildThresholdDeltaString();
-void parseThresholdDeltaStringInt();
-void parseThresholdDeltaStringFloat();
-void addGpio();
+void parseThresholdDeltaString();
+void buildSenseAndGpioString();
+void parseSenseAndGpioString();
 void run_tests();
 
 int main(int argc, char **argv){
@@ -39,17 +39,17 @@ void run_tests() {
     printf("1\n");
     buildThresholdDeltaString();
     printf("2\n");
-    parseThresholdDeltaStringInt();
+    parseThresholdDeltaString();
     printf("3\n");
-    parseThresholdDeltaStringFloat();
+    buildSenseAndGpioString();
     printf("4\n");
-    addGpio();
+    parseSenseAndGpioString();
 }
 
 void buildThresholdDeltaString() {
     char result[30];
     Action::buildThresholdDeltaString(result, 10, 3);
-    if (strcmp(result, "10.0~3.0")) {
+    if (strcmp(result, "10~3")) {
         printf("Wrong result: %s\n", result);
     }
     else {
@@ -57,7 +57,7 @@ void buildThresholdDeltaString() {
     }
 }
 
-void parseThresholdDeltaStringInt() {
+void parseThresholdDeltaString() {
     Action result;
 
     result.parseThresholdDeltaString("10~3");
@@ -65,50 +65,44 @@ void parseThresholdDeltaStringInt() {
     assertAction(result, 10, 3);
 }
 
+void buildSenseAndGpioString() {
+    char result[30];
+    Action action("sense");
+    action.setGpio(10);
+    action.buildSenseAndGpioString(result);
 
-void parseThresholdDeltaStringFloat() {
-    Action result;
-
-    result.parseThresholdDeltaString("10.0~3.0");
-
-    assertAction(result, 10, 3);
+    if (strcmp(result, "A|sense|10")) {
+        printf("Wrong sense and gpio string: %s\n", result);
+    }
+    else {
+        printf("Test passed.\n");
+    }
 }
 
-void addGpio() {
-    Action result;
+void parseSenseAndGpioString() {
+    Action action;
+    const char* senseAndGpioString = "A|sense|12";
+    action.parseSenseAndGpio(senseAndGpioString);
 
-    result.addGpio(3);
-    if (!(result.getGpio(0) == 3)) {
-        printf("Error setting GPIO 0 to 3\n");
-        return;
+    if (strcmp(action.getSense(), "sense")) {
+        printf("Wrong sense parsed: %s\n", action.getSense());
     }
-    result.addGpio(2);
-    if (!(result.getGpio(1) == 2)) {
-        printf("Error setting GPIO 1 to 2\n");
-        return;
+    else if (action.getGpio() != 12) {
+        printf("Wrong gpio parsed: %d\n", action.getGpio());
     }
-    result.addGpio(1);
-    if (!(result.getGpio(2) == 1)) {
-        printf("Error setting GPIO 2 to 1\n");
-        return;
+    else {
+        printf("Test passed.\n");
     }
-
-    if (!(result.getGpiosSize() == 3)) {
-        printf("Wrong GPIO size\n");
-        return;
-    }
-
-    printf("Test passed.");
 }
 
 
 bool assertAction(Action action, float threshold, float delta) {
     if (action.getThreshold() != threshold) {
-        printf("Wrong threshold: %.1f\n", action.getThreshold());
+        printf("Wrong threshold: %d\n", action.getThreshold());
         return false;
     }
     else if (action.getDelta() != delta) {
-        printf("Wrong delta: %.1f\n", action.getDelta());
+        printf("Wrong delta: %d\n", action.getDelta());
         return false;
     }
     else {

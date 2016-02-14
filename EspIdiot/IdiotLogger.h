@@ -12,8 +12,7 @@ class IdiotLogger : public Stream {
   public:
     IdiotLogger();
     ~IdiotLogger();
-    void setDebugOutput(bool);
-    void begin(long);
+    void begin();
     void close();
     virtual size_t write(uint8_t);
     virtual int available();
