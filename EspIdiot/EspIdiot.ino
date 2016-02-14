@@ -1,4 +1,4 @@
-#define VERSION "39.32"
+#define VERSION "40.9"
 
 #include <Arduino.h>
 
@@ -104,7 +104,7 @@ char readSensesResult[MAX_READ_SENSES_RESULT_SIZE];
 char finalState[MAX_STATE_JSON_LENGTH];
 
 Action actions[10];
-int actionsSize = 0;
+int actionsSize;
 
 void ICACHE_RAM_ATTR osWatch(void) {
     unsigned long t = millis();
@@ -260,13 +260,6 @@ void setup(void)
   
   PersistentStore.begin();
   setupResetButton();
-  
-  updateConfigStartTime = 0;
-
-  serveLocallyStartMs = 0;
-  serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
-  lastPublishedAtMillis = 0;
-  publishInterval = DEFAULT_PUBLISH_INTERVAL;
 }
 
 void loop(void)
@@ -277,6 +270,14 @@ void loop(void)
   idiotWifiServer.handleClient();
   
   if (state == boot) {
+    configChanged = false;
+    updateConfigStartTime = 0;
+
+    serveLocallyStartMs = 0;
+    serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
+    lastPublishedAtMillis = 0;
+    publishInterval = DEFAULT_PUBLISH_INTERVAL;
+    actionsSize = 0;
     if (!PersistentStore.wifiCredentialsStored()) {
       toState(serve_locally);
       serveLocallySeconds = 60;
@@ -354,13 +355,15 @@ void loop(void)
   else if (state == load_config) {
     char config[CONFIG_MAX_SIZE];
     PersistentStore.readConfig(config);
+    Logger.println("Loaded config:");
+    Logger.println(config);
     yield();
     loadConfig(config);
     if (mqttClient.state() == MQTT_CONNECTED) {
       toState(update_config);
     }
     else {
-      toState(local_update_config);
+      toState(process_gpio);
     }
   }
   else if (state == update_config) { 
@@ -375,15 +378,9 @@ void loop(void)
       return; // do not move to next state yet
     }
     else {
-      toState(process_gpio);
-    }
-  }
-  else if (state == local_update_config) {
-    if (localUpdateWaits++ < LOCAL_UPDATE_WAITS) {
-      delay(1000);
-      return;
-    }
-    else {
+      if (configChanged) {
+        saveConfig();
+      }
       toState(process_gpio);
     }
   }
@@ -434,10 +431,31 @@ void loop(void)
     if (oneWirePin != -1) {    
       IdiotOneWire.readOneWire(Logger, oneWirePin, senses);
     }
-
-    // TODO: here iterate over senses, check wheather the sense has an associated action and change the GPIO state
-    // according to the value
-    // maybe divide into a separate state, leave trace in state json of the actions done.
+    
+    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
+    {
+      const char* key = it->key;
+      for (int i = 0; i < actionsSize; ++i) {
+        Action action = actions[i];
+        Logger.print("Configured action on [");
+        Logger.print(action.getSense());
+        Logger.println("]");
+        if (!strcmp(action.getSense(), key)) {
+          Logger.print("Found sense for action ");
+          Logger.println(key);
+          int value = atoi(it->value);
+          if (value <= action.getThreshold() - action.getDelta()) {
+            Logger.println("GPIO should be high");
+            ensureGpio(action.getGpio(), HIGH);
+          }
+          else if (value >= action.getThreshold() + action.getDelta()) {
+            Logger.println("GPIO should be low");
+            ensureGpio(action.getGpio(), LOW);
+          }
+        }
+      }
+    }
+    
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
     
@@ -490,8 +508,7 @@ void loop(void)
     Logger.println(millis());
 
     if (sleepSeconds == 0) {
-      configChanged = false;
-      updateConfigStartTime = 0;
+      delay(10*1000); // 10 second delay to cool things down
       toState(boot);
       return;
     }
@@ -499,6 +516,18 @@ void loop(void)
     Logger.flush();
     Logger.close();
     EspControl.deepSleep(sleepSeconds);
+  }
+}
+
+void ensureGpio(int gpio, int state) {
+  if (digitalRead(gpio) != state) {
+    Logger.print("Changing GPIO ");
+    Logger.print(gpio);
+    Logger.print(" to ");
+    Logger.print(state);
+    
+    pinMode(gpio, OUTPUT);
+    digitalWrite(gpio, state);
   }
 }
 
@@ -598,13 +627,25 @@ void loadConfig(JsonObject& config) {
     loadGpioConfig(config); // buggy IoT json
   }
 
-  for (JsonObject::iterator it=config.begin(); it!=config.end(); ++it)
+  if (config.containsKey("actions")) {
+    loadActions(config["actions"]);
+  }
+  else {
+    loadActions(config);
+  }
+}
+
+void loadActions(JsonObject& actionsJson) {
+  for (JsonObject::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
   {
     const char* key = it->key;
     if (key[0] == 'A' && key[1] == '|') {
       configChanged = true;
       Action action;
       Action::fromConfig(key, it->value, &action);
+
+      Logger.print("Found configured action on sense: ");
+      Logger.println(action.getSense());
       
       actions[actionsSize] = action;
       actionsSize++;
@@ -679,6 +720,8 @@ void saveConfig() {
 
   char configString[300];
   root.printTo(configString, 300);
+  Logger.println("Saving config:");
+  Logger.println(configString);
   PersistentStore.putConfig(configString);
 }
 
