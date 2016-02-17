@@ -1,7 +1,8 @@
 SOURCES = test/runtests.cpp \
 	  test/fake_serial.cpp \
 	  test/mock_arduino.cpp \
-	  EspIdiot/Action.cpp 
+	  EspIdiot/Action.cpp \
+	  EspIdiot/GpioState.cpp 
 
 OBJECTS := $(addsuffix .o, $(addprefix .build/, $(basename $(SOURCES))))
 DEPFILES := $(subst .o,.dep, $(subst .build/,.deps/, $(OBJECTS)))

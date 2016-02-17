@@ -1,4 +1,4 @@
-#define VERSION "40.19"
+#define VERSION "41"
 
 #include <Arduino.h>
 
@@ -30,6 +30,9 @@
 #include <Ticker.h>
 
 #include "EspControl.h"
+
+#include "GpioState.h"
+
 ADC_MODE(ADC_VCC);
 
 #define OSWATCH_RESET_TIME 60 // 1 minute
@@ -77,11 +80,9 @@ char uuid[15];
 char updateTopic[20];
 char updateResultTopic[30];
 bool configChanged = false;
-#define LOCAL_UPDATE_WAITS 5
-int localUpdateWaits = 0;
+bool gpioStateChanged = false;
 int mqttConnectAttempts = 0;
 int wifiConnectAttempts = 0;
-long clientWaitStartedTime;
 
 #include "State.h"
 #include "IdiotWifiServer.h"
@@ -266,6 +267,8 @@ void loop(void)
     mqttConnectAttempts = 0;
     
     configChanged = false;
+    gpioStateChanged = false;
+    
     updateConfigStartTime = 0;
 
     serveLocallyStartMs = 0;
@@ -393,30 +396,8 @@ void loop(void)
     if (oneWirePin != -1) {    
       IdiotOneWire.readOneWire(Logger, oneWirePin, senses);
     }
-    
-    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
-    {
-      const char* key = it->key;
-      for (int i = 0; i < actionsSize; ++i) {
-        Action action = actions[i];
-        Logger.print("Configured action on [");
-        Logger.print(action.getSense());
-        Logger.println("]");
-        if (!strcmp(action.getSense(), key)) {
-          Logger.print("Found sense for action ");
-          Logger.println(key);
-          int value = atoi(it->value);
-          if (value <= action.getThreshold() - action.getDelta()) {
-            Logger.println("GPIO should be low");
-            ensureGpio(action.getGpio(), LOW);
-          }
-          else if (value >= action.getThreshold() + action.getDelta()) {
-            Logger.println("GPIO should be high");
-            ensureGpio(action.getGpio(), HIGH);
-          }
-        }
-      }
-    }
+
+    doActions(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
@@ -426,7 +407,7 @@ void loop(void)
     toState(local_publish);
   }
   else if (state == local_publish) {
-    if (!configChanged && lastPublishedAtMillis != 0 && millis() - lastPublishedAtMillis < publishInterval*1000) {
+    if (!configChanged && !gpioStateChanged && lastPublishedAtMillis != 0 && millis() - lastPublishedAtMillis < publishInterval*1000) {
       Logger.println("Skip publishing as published recently.");
       toState(deep_sleep);
     }
@@ -482,8 +463,36 @@ void loop(void)
   }
 }
 
+void doActions(JsonObject& senses) {
+  GpioState.clear();
+  for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
+  {
+    const char* key = it->key;
+    for (int i = 0; i < actionsSize; ++i) {
+      Action action = actions[i];
+      Logger.print("Configured action on [");
+      Logger.print(action.getSense());
+      Logger.println("]");
+      if (!strcmp(action.getSense(), key)) {
+        Logger.print("Found sense for action ");
+        Logger.println(key);
+        int value = atoi(it->value);
+        if (value <= action.getThreshold() - action.getDelta()) {
+          Logger.println("GPIO should be low");
+          ensureGpio(action.getGpio(), LOW);
+        }
+        else if (value >= action.getThreshold() + action.getDelta()) {
+          Logger.println("GPIO should be high");
+          ensureGpio(action.getGpio(), HIGH);
+        }
+      }
+    }
+  }
+}
+
 void ensureGpio(int gpio, int state) {
   if (digitalRead(gpio) != state) {
+    gpioStateChanged = true;
     Logger.print("Changing GPIO ");
     Logger.print(gpio);
     Logger.print(" to ");
@@ -491,9 +500,8 @@ void ensureGpio(int gpio, int state) {
     
     pinMode(gpio, OUTPUT);
     digitalWrite(gpio, state);
-
-    configChanged = true;
   }
+  GpioState.set(gpio, state);
 }
 
 void requestState() {
@@ -704,6 +712,9 @@ void buildStateString(char* stateJson) {
   reported["state"] = STATE_STRING[state];
   reported["lawake"] = PersistentStore.readLastAwake();
   
+  JsonObject& gpio = reported.createNestedObject("gpio");
+  injectGpio(gpio);
+  
   JsonObject& config = reported.createNestedObject("config");
 
   injectConfig(config);
@@ -722,3 +733,10 @@ void buildStateString(char* stateJson) {
   Logger.println(stateJson);
   return;
 }
+
+void injectGpio(JsonObject& gpio) { 
+  for (int i = 0; i < GpioState.getSize(); ++i) {
+    gpio[String(GpioState.getGpio(i))] = GpioState.getState(i);
+  }
+}
+

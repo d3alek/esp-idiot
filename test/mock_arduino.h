@@ -39,3 +39,6 @@ void initialize_mock_arduino();
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+
+#define HIGH 1
+#define LOW 0

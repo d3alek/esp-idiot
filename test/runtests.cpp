@@ -20,6 +20,7 @@
 
 #include "mock_arduino.h"
 #include "Action.h"
+#include "GpioState.h"
 
 using namespace std;
 
@@ -28,6 +29,7 @@ void buildThresholdDeltaString();
 void parseThresholdDeltaString();
 void buildSenseAndGpioString();
 void parseSenseAndGpioString();
+void gpioState();
 void run_tests();
 
 int main(int argc, char **argv){
@@ -44,6 +46,8 @@ void run_tests() {
     buildSenseAndGpioString();
     printf("4\n");
     parseSenseAndGpioString();
+    printf("5\n");
+    gpioState();
 }
 
 void buildThresholdDeltaString() {
@@ -95,6 +99,39 @@ void parseSenseAndGpioString() {
     }
 }
 
+void gpioState() {
+    GpioState.clear();
+
+    GpioState.set(1, HIGH); 
+
+    if (GpioState.getSize() != 1 || GpioState.getGpio(0) != 1 || GpioState.getState(0) != 1) {
+        printf("Wrong GpioState after first set: %d %d %d\n", GpioState.getSize(), GpioState.getGpio(0), GpioState.getState(0));
+        return;
+    }
+    
+    GpioState.set(2, LOW); 
+
+    if (GpioState.getSize() != 2 || GpioState.getGpio(1) != 2 || GpioState.getState(1) != 0) {
+        printf("Wrong GpioState after second set: %d %d %d\n", GpioState.getSize(), GpioState.getGpio(1), GpioState.getState(1));
+        return;
+    }
+
+    GpioState.set(1, LOW); 
+
+    if (GpioState.getSize() != 2 || GpioState.getGpio(0) != 1 || GpioState.getState(0) != 0) {
+        printf("Wrong GpioState after third set: %d %d %d\n", GpioState.getSize(), GpioState.getGpio(0), GpioState.getState(0));
+        return;
+    }
+
+    GpioState.set(3, HIGH); 
+
+    if (GpioState.getSize() != 3 || GpioState.getGpio(2) != 3 || GpioState.getState(2) != 1) {
+        printf("Wrong GpioState after fourth set: %d %d %d\n", GpioState.getSize(), GpioState.getGpio(2), GpioState.getState(2));
+        return;
+    }
+
+    printf("Test passed.\n");
+}
 
 bool assertAction(Action action, float threshold, float delta) {
     if (action.getThreshold() != threshold) {
