@@ -8,7 +8,6 @@
         STATE(serve_locally) \
         STATE(load_config) \
         STATE(update_config) \
-        STATE(process_gpio) \
         STATE(read_senses) \
         STATE(publish) \
         STATE(local_publish)  \

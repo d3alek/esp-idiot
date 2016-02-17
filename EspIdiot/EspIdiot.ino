@@ -1,4 +1,4 @@
-#define VERSION "40.12"
+#define VERSION "40.19"
 
 #include <Arduino.h>
 
@@ -91,9 +91,6 @@ int state = boot;
 IdiotLogger Logger;
 IdiotWifiServer idiotWifiServer;
 
-char mode[12];
-char value[12];
-
 // devices
 
 int dht11Pin = -1;
@@ -173,10 +170,6 @@ void constructTopicName(char* topic, const char* topicPrefix) {
 }
 
 bool mqttConnect() {
-  if (mqttClient.connected()) {
-    Logger.println("MQTT already connected.");
-    return true;
-  }
   Logger.print("MQTT ");
   mqttClient.setServer(mqttHostname, mqttPort).setCallback(mqttCallback);
   if (mqttClient.connect(uuid, mqttUser, mqttPassword)) {
@@ -254,14 +247,12 @@ void setup(void)
 
   Logger.printf("Used bytes: %d Total bytes: %d\n", fsInfo.usedBytes, fsInfo.totalBytes);
 
-  // GPIO init
-  strcpy(mode, ELEVEN_DASHES);
-  strcpy(value, ELEVEN_DASHES);
-  
   PersistentStore.begin();
   setupResetButton();
   
   lastPublishedAtMillis = 0;
+  
+  WiFi.mode(WIFI_STA);
 }
 
 void loop(void)
@@ -272,6 +263,8 @@ void loop(void)
   idiotWifiServer.handleClient();
   
   if (state == boot) {
+    mqttConnectAttempts = 0;
+    
     configChanged = false;
     updateConfigStartTime = 0;
 
@@ -308,41 +301,27 @@ void loop(void)
     return;
   }
   else if (state == connect_to_wifi) {
-    WiFi.mode(WIFI_STA);
+    char wifiName[WIFI_NAME_MAX_SIZE];
+    PersistentStore.readWifiName(wifiName);
+    Logger.println(wifiName);
+    char wifiPassword[WIFI_PASS_MAX_SIZE];
+    PersistentStore.readWifiPassword(wifiPassword);
+    Logger.println(wifiPassword);
+
+    WiFi.begin(wifiName, wifiPassword);
+    
     int wifiConnectResult = WiFi.waitForConnectResult();
     
     if (wifiConnectResult == WL_CONNECTED) {
       toState(connect_to_mqtt);
     }
     else {
-      char wifiName[WIFI_NAME_MAX_SIZE];
-      PersistentStore.readWifiName(wifiName);
-      Logger.println(wifiName);
-      char wifiPassword[WIFI_PASS_MAX_SIZE];
-      PersistentStore.readWifiPassword(wifiPassword);
-      Logger.println(wifiPassword);
-  
-      if (strcmp(WiFi.SSID().c_str(), wifiName) || strcmp(WiFi.psk().c_str(), wifiPassword)) {
-        Logger.printf("Connecting to %s for the first time\n", wifiName);
-        WiFi.begin(wifiName, wifiPassword);
+      if (wifiConnectAttempts++ < MAX_WIFI_CONNECTED_ATTEMPTS) {
+        delay(1000);
       }
       else {
-        WiFi.begin();
-      }
-      
-      wifiConnectResult = WiFi.waitForConnectResult();
-      
-      if (wifiConnectResult == WL_CONNECTED) {
-        toState(connect_to_mqtt);
-      }
-      else {
-        if (wifiConnectAttempts++ < MAX_WIFI_CONNECTED_ATTEMPTS) {
-          delay(1000);
-        }
-        else {
-          toState(load_config); 
-        }      
-      }
+        toState(load_config); 
+      }      
     }
     return;
   }
@@ -364,7 +343,7 @@ void loop(void)
       toState(update_config);
     }
     else {
-      toState(process_gpio);
+      toState(read_senses);
     }
   }
   else if (state == update_config) { 
@@ -382,26 +361,8 @@ void loop(void)
       if (configChanged) {
         saveConfig();
       }
-      toState(process_gpio);
+      toState(read_senses);
     }
-  }
-  else if (state == process_gpio) {
-    for (int i = gpio0 ; i  < gpio16 ; ++i) {
-      int gpioNumber = GPIO_NUMBER[i];
-      if (mode[i] == 'i') {
-        pinMode(gpioNumber, INPUT);
-        value[i] = digitalRead(gpioNumber) == HIGH ? 'h' : 'l';
-        Logger.printf("INPUT GPIO%d %c\n", gpioNumber, value[i]);
-      }
-      else if (mode[i] == 'o') {
-        pinMode(gpioNumber, OUTPUT);
-        digitalWrite(gpioNumber, value[i] == 'h' ? HIGH : LOW);
-        Logger.printf("OUTPUT GPIO%d %c for 1 second\n", gpioNumber, value[i]);
-        delay(1000);
-        digitalWrite(gpioNumber, value[i] == 'h' ? LOW : HIGH);
-      }
-    }
-    toState(read_senses);
   }
   else if (state == read_senses) {
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
@@ -446,12 +407,12 @@ void loop(void)
           Logger.println(key);
           int value = atoi(it->value);
           if (value <= action.getThreshold() - action.getDelta()) {
-            Logger.println("GPIO should be high");
-            ensureGpio(action.getGpio(), HIGH);
-          }
-          else if (value >= action.getThreshold() + action.getDelta()) {
             Logger.println("GPIO should be low");
             ensureGpio(action.getGpio(), LOW);
+          }
+          else if (value >= action.getThreshold() + action.getDelta()) {
+            Logger.println("GPIO should be high");
+            ensureGpio(action.getGpio(), HIGH);
           }
         }
       }
@@ -509,6 +470,7 @@ void loop(void)
     Logger.println(millis());
 
     if (sleepSeconds == 0) {
+      WiFi.disconnect();
       delay(10*1000); // 10 second delay to cool things down
       toState(boot);
       return;
@@ -657,24 +619,17 @@ void loadActions(JsonObject& actionsJson) {
 }
 
 void loadGpioConfig(JsonObject& gpio) {
-  if (gpio.containsKey("mode")) {
-    configChanged = true;
-    strcpy(mode, gpio["mode"]);
-  }
-  if (gpio.containsKey("value")) {
-    configChanged = true;
-    strcpy(value, gpio["value"]);
-  }
-  int modeSize = strlen(mode);
-  char pinBuffer[3];
-  for (int i = 0; i < modeSize; ++i) {
-    int gpioNumber = GPIO_NUMBER[i];
-    if (mode[i] == 's') {
-      itoa(gpioNumber,pinBuffer,10);
-      if (gpio.containsKey(pinBuffer)) {
-        configChanged = true;
-        makeDevicePinPairing(gpioNumber, gpio[pinBuffer].asString());
+  for (JsonObject::iterator it=gpio.begin(); it!=gpio.end(); ++it)
+  {
+    char pinBuffer[3];
+    const char* key = it->key;
+    if (strlen(key) < 3) {
+      int pinNumber = atoi(key);
+      if (pinNumber == 0) {
+        continue;
       }
+      configChanged = true;
+      makeDevicePinPairing(pinNumber, it->value.asString());
     }
   }
 }
@@ -697,8 +652,6 @@ void injectConfig(JsonObject& config) {
   config["sleep"] = sleepSeconds;
   
   JsonObject& gpio = config.createNestedObject("gpio");
-  gpio["mode"] = mode;
-  gpio["value"] = value;
   if (dht11Pin != -1) {
     gpio.set(String(dht11Pin), "DHT11"); // this string conversion is necessary because otherwise ArduinoJson corrupts the key
   }
