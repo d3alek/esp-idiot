@@ -95,3 +95,7 @@ void Action::buildSenseAndGpioString(char* senseAndGpioString) {
   strcat(senseAndGpioString, buf);
 }
 
+bool Action::looksLikeAction(const char* string) {
+  return string[0] == 'A' && string[1] == '|';
+}
+

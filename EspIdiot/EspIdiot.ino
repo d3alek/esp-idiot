@@ -1,4 +1,4 @@
-#define VERSION "41"
+#define VERSION "42"
 
 #include <Arduino.h>
 
@@ -21,53 +21,42 @@
 
 #include "SizeLimitedFileAppender.h"
 
-#include "GPIO.h"
-
 #include <OneWire.h>
 #include "OneWireSensors.h"
 
 #include "Action.h"
-#include <Ticker.h>
 
 #include "EspControl.h"
 
 #include "GpioState.h"
 
-ADC_MODE(ADC_VCC);
+// file which defines mqttHostname, mqttPort, mqttUser, mqttPassword
+#include "MQTTConfig.h"
 
-#define OSWATCH_RESET_TIME 60 // 1 minute
-Ticker tickerOSWatch;
-static unsigned long last_loop;
+#include "State.h"
+#include "IdiotWifiServer.h"
+
+ADC_MODE(ADC_VCC);
 
 #define DEFAULT_SLEEP_SECONDS 60*15
 #define HARD_RESET_PIN 0
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
+
 #define MAX_STATE_JSON_LENGTH 512
+
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
-
 #define MAX_LOCAL_PUBLISH_FILE_BYTES 150000 // 150kb
-
 #define MAX_READ_SENSES_RESULT_SIZE 300
-
-#define ELEVEN_DASHES "-----------"
-
 #define DELTA_WAIT_SECONDS 2
-
 #define DEFAULT_PUBLISH_INTERVAL 60
+#define DEFAULT_SERVE_LOCALLY_SECONDS 2
 
 unsigned long publishInterval;
 
 const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
-
-// file which defines 
-// const char* mqttHostname
-// const int mqttPort
-// const char* mqttUser
-// const char* mqttPassword
-#include "MQTTConfig.h"
 
 WiFiClient wclient;
 PubSubClient mqttClient(wclient);
@@ -84,15 +73,10 @@ bool gpioStateChanged = false;
 int mqttConnectAttempts = 0;
 int wifiConnectAttempts = 0;
 
-#include "State.h"
-#include "IdiotWifiServer.h"
-
 int state = boot;
 
 IdiotLogger Logger;
 IdiotWifiServer idiotWifiServer;
-
-// devices
 
 int dht11Pin = -1;
 int dht22Pin = -1;
@@ -104,16 +88,10 @@ char finalState[MAX_STATE_JSON_LENGTH];
 Action actions[10];
 int actionsSize;
 
-void ICACHE_RAM_ATTR osWatch(void) {
-    unsigned long t = millis();
-    unsigned long last_run = abs(t - last_loop);
-    if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
-      Logger.println("osWatch: restart");
-      // save the hit here to eeprom or to rtc memory if needed
-        ESP.restart();  // normal reboot 
-        //ESP.reset();  // hard reset
-    }
-}
+unsigned long lastPublishedAtMillis;
+unsigned long updateConfigStartTime;
+unsigned long serveLocallyStartMs;
+float serveLocallySeconds;
 
 void toState(int newState) {
   if (state == newState) {
@@ -211,12 +189,6 @@ void loopResetButton() {
   }
 }
 
-unsigned long lastPublishedAtMillis;
-unsigned long updateConfigStartTime;
-unsigned long serveLocallyStartMs;
-#define DEFAULT_SERVE_LOCALLY_SECONDS 2
-float serveLocallySeconds;
-
 void setup(void)
 {
   Serial.begin(115200);
@@ -230,9 +202,6 @@ void setup(void)
     ESP.eraseConfig();
     ESP.reset();
   }
-  
-  last_loop = millis();
-  //tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
   
   Logger.begin();
 
@@ -258,7 +227,6 @@ void setup(void)
 
 void loop(void)
 {
-  last_loop = millis();
   loopResetButton();
   
   idiotWifiServer.handleClient();
@@ -553,7 +521,7 @@ void buildSenseKey(char* sense, const char* sensor, const char* readingName) {
 }
 
 void loadConfig(char* string) {
-  StaticJsonBuffer<400> jsonBuffer;
+  StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
   JsonObject& root = jsonBuffer.parseObject(string);
   if (!root.success()) {
     Logger.print("Could not parse JSON from config string: ");
@@ -612,7 +580,7 @@ void loadActions(JsonObject& actionsJson) {
   for (JsonObject::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
   {
     const char* key = it->key;
-    if (key[0] == 'A' && key[1] == '|') {
+    if (Action::looksLikeAction(key)) {
       configChanged = true;
       Action action;
       Action::fromConfig(key, it->value, &action);
@@ -631,7 +599,7 @@ void loadGpioConfig(JsonObject& gpio) {
   {
     char pinBuffer[3];
     const char* key = it->key;
-    if (strlen(key) < 3) {
+    if (looksLikePinNumber(key)) {
       int pinNumber = atoi(key);
       if (pinNumber == 0) {
         continue;
@@ -640,6 +608,10 @@ void loadGpioConfig(JsonObject& gpio) {
       makeDevicePinPairing(pinNumber, it->value.asString());
     }
   }
+}
+
+bool looksLikePinNumber(const char* string) {
+  return strlen(string) < 3;
 }
 
 // make sure this is synced with injectConfig
@@ -675,15 +647,15 @@ void injectConfig(JsonObject& config) {
 }
 
 void saveConfig() {
-  StaticJsonBuffer<300> jsonBuffer;
+  StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
   JsonObject& stateObject = root.createNestedObject("state");
   JsonObject& config = stateObject.createNestedObject("config");
 
   injectConfig(config);
 
-  char configString[300];
-  root.printTo(configString, 300);
+  char configString[CONFIG_MAX_SIZE];
+  root.printTo(configString, CONFIG_MAX_SIZE);
   Logger.println("Saving config:");
   Logger.println(configString);
   PersistentStore.putConfig(configString);
@@ -712,8 +684,8 @@ void buildStateString(char* stateJson) {
   reported["state"] = STATE_STRING[state];
   reported["lawake"] = PersistentStore.readLastAwake();
   
-  JsonObject& gpio = reported.createNestedObject("gpio");
-  injectGpio(gpio);
+  JsonObject& gpio = reported.createNestedObject("mode");
+  injectGpioState(gpio);
   
   JsonObject& config = reported.createNestedObject("config");
 
@@ -734,7 +706,7 @@ void buildStateString(char* stateJson) {
   return;
 }
 
-void injectGpio(JsonObject& gpio) { 
+void injectGpioState(JsonObject& gpio) { 
   for (int i = 0; i < GpioState.getSize(); ++i) {
     gpio[String(GpioState.getGpio(i))] = GpioState.getState(i);
   }
