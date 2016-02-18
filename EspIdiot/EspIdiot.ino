@@ -51,6 +51,7 @@ ADC_MODE(ADC_VCC);
 #define DELTA_WAIT_SECONDS 2
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
+#define GPIO_SENSE "gpio-sense"
 
 unsigned long publishInterval;
 
@@ -81,6 +82,7 @@ IdiotWifiServer idiotWifiServer;
 int dht11Pin = -1;
 int dht22Pin = -1;
 int oneWirePin = -1;
+int gpioSensePin = -1;
 char readSensesResult[MAX_READ_SENSES_RESULT_SIZE];
 
 char finalState[MAX_STATE_JSON_LENGTH];
@@ -243,6 +245,12 @@ void loop(void)
     serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
     publishInterval = DEFAULT_PUBLISH_INTERVAL;
     actionsSize = 0;
+    
+    dht11Pin = -1;
+    dht22Pin = -1;
+    oneWirePin = -1;
+    gpioSensePin = -1;
+    
     if (!PersistentStore.wifiCredentialsStored()) {
       toState(serve_locally);
       serveLocallySeconds = 60;
@@ -363,6 +371,10 @@ void loop(void)
 
     if (oneWirePin != -1) {    
       IdiotOneWire.readOneWire(Logger, oneWirePin, senses);
+    }
+
+    if (gpioSensePin != -1) {
+      senses[GPIO_SENSE] = gpioSensePin;
     }
 
     doActions(senses);
@@ -625,6 +637,9 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
   else if (strcmp(device, "OneWire") == 0) {
     oneWirePin = pinNumber;
   }
+  else if (strcmp(device, GPIO_SENSE) == 0) {
+    gpioSensePin = pinNumber;
+  }
 }
 
 // make sure this is synced with makeDevicePinPairing
@@ -640,6 +655,9 @@ void injectConfig(JsonObject& config) {
   }
   if (oneWirePin != -1) {
     gpio.set(String(oneWirePin), "OneWire");
+  }
+  if (gpioSensePin != -1) {
+    gpio.set(String(gpioSensePin), GPIO_SENSE);
   }
 
   JsonObject& actions = config.createNestedObject("actions");
