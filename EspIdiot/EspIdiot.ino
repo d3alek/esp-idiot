@@ -287,8 +287,12 @@ void loop(void)
     PersistentStore.readWifiPassword(wifiPassword);
     Logger.println(wifiPassword);
 
-    WiFi.begin(wifiName, wifiPassword);
-    
+    if (strlen(wifiPassword) == 0) {
+      WiFi.begin(wifiName);
+    }
+    else {
+      WiFi.begin(wifiName, wifiPassword);
+    }
     int wifiConnectResult = WiFi.waitForConnectResult();
     
     if (wifiConnectResult == WL_CONNECTED) {
