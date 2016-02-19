@@ -1,4 +1,4 @@
-#define VERSION "42"
+#define VERSION "43.14"
 
 #include <Arduino.h>
 
@@ -296,7 +296,7 @@ void loop(void)
     int wifiConnectResult = WiFi.waitForConnectResult();
     
     if (wifiConnectResult == WL_CONNECTED) {
-      toState(connect_to_mqtt);
+      toState(connect_to_internet);
     }
     else {
       if (wifiConnectAttempts++ < MAX_WIFI_CONNECTED_ATTEMPTS) {
@@ -307,6 +307,42 @@ void loop(void)
       }      
     }
     return;
+  }
+  else if (state == connect_to_internet) {
+    const char* url = "http://clients3.google.com/generate_204";
+    HTTPClient http;
+    Logger.println("[HTTP] begin..");
+    http.begin(url);
+    
+    Logger.println("[HTTP] get...");
+    int httpCode = http.GET();
+
+    if (httpCode != 204) {
+      Logger.print("GET code: ");
+      Logger.println(httpCode);
+
+      String payload = http.getString();
+      Logger.println(payload);
+
+      http.begin("http://1.1.1.1/cgi-bin/login");
+      http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+      httpCode = http.POST(String("msgtype=login&ssid=1&logintype=2&username=guest&password=guest"));
+
+      Logger.print("POST code: ");
+      Logger.println(httpCode);
+      Logger.println(http.getString());
+
+      if (httpCode == HTTP_CODE_OK) {
+        http.begin("http://www.e607.com/hsia/authentication.php");
+        httpCode = http.GET();
+
+        Logger.print("GET code: ");
+        Logger.println(httpCode);
+        Logger.println(http.getString());
+      }
+    }
+
+    toState(connect_to_mqtt);
   }
   else if (state == connect_to_mqtt) {
     while (mqttConnectAttempts++ < MAX_MQTT_CONNECT_ATTEMPTS && !mqttConnect()) { 
@@ -381,10 +417,10 @@ void loop(void)
       senses[GPIO_SENSE] = gpioSensePin;
     }
 
-    doActions(senses);
-    
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
+
+    doActions(senses);
     
     readInternalVoltage();
     
@@ -454,13 +490,24 @@ void doActions(JsonObject& senses) {
     const char* key = it->key;
     for (int i = 0; i < actionsSize; ++i) {
       Action action = actions[i];
-      Logger.print("Configured action on [");
-      Logger.print(action.getSense());
-      Logger.println("]");
+      Logger.print("Configured action ");
+      action.printTo(Logger);
+      int value = -2;
+      if (it->value.is<int>()) {
+        value = it->value;
+      }
+      else if (it->value.is<const char*>()) {
+        const char* valueString = it->value;
+        Logger.printf("Value String [%s]\n", valueString);
+        if (valueString == NULL) {
+          Logger.println("Could not parse value integer as value is null");
+        }
+        else {
+          value = atoi(it->value);
+        }
+      }
       if (!strcmp(action.getSense(), key)) {
-        Logger.print("Found sense for action ");
-        Logger.println(key);
-        int value = atoi(it->value);
+        Logger.printf("Found sense for the action with value [%d]\n", value);
         if (value <= action.getThreshold() - action.getDelta()) {
           Logger.println("GPIO should be low");
           ensureGpio(action.getGpio(), LOW);

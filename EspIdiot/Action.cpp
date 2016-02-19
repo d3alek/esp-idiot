@@ -99,3 +99,7 @@ bool Action::looksLikeAction(const char* string) {
   return string[0] == 'A' && string[1] == '|';
 }
 
+void Action::printTo(IdiotLogger logger) {
+  logger.printf("%s[t:%d,d:%d,g:%d]\n",_sense,_threshold,_delta, _gpio);
+}
+

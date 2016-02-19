@@ -1,6 +1,8 @@
 #ifndef ACTION_H
 #define ACTION_H
 
+#include "IdiotLogger.h"
+
 class Action {
   public:
     Action();
@@ -18,6 +20,7 @@ class Action {
     int getGpio();
     
     void parseSenseAndGpio(const char*);
+    void printTo(IdiotLogger);
   private:
     char _sense[30];
     int _delta;
