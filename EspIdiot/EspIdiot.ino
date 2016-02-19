@@ -1,4 +1,4 @@
-#define VERSION "43.14"
+#define VERSION "43.16"
 
 #include <Arduino.h>
 
@@ -94,6 +94,23 @@ unsigned long lastPublishedAtMillis;
 unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
+
+// source: https://github.com/esp8266/Arduino/issues/1532
+#include <Ticker.h>
+Ticker tickerOSWatch;
+#define OSWATCH_RESET_TIME 30
+
+static unsigned long last_loop;
+
+void ICACHE_RAM_ATTR osWatch(void) {
+  unsigned long t = millis();
+  unsigned long last_run = abs(t - last_loop);
+  if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
+    Logger.println("osWatch: reset");
+    ESP.reset();  // hard reset
+  }
+}
+
 
 void toState(int newState) {
   if (state == newState) {
@@ -193,6 +210,9 @@ void loopResetButton() {
 
 void setup(void)
 {
+  last_loop = millis();
+  tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
+  
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
@@ -229,6 +249,8 @@ void setup(void)
 
 void loop(void)
 {
+  last_loop = millis();
+  
   loopResetButton();
   
   idiotWifiServer.handleClient();
