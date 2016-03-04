@@ -1,4 +1,4 @@
-#define VERSION "43.16"
+#define VERSION "44.3"
 
 #include <Arduino.h>
 
@@ -346,22 +346,13 @@ void loop(void)
       String payload = http.getString();
       Logger.println(payload);
 
-      http.begin("http://1.1.1.1/cgi-bin/login");
+      http.begin("http://1.1.1.1/login.html");
       http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-      httpCode = http.POST(String("msgtype=login&ssid=1&logintype=2&username=guest&password=guest"));
+      httpCode = http.POST(String("username=guest&password=guest&buttonClicked=4"));
 
       Logger.print("POST code: ");
       Logger.println(httpCode);
       Logger.println(http.getString());
-
-      if (httpCode == HTTP_CODE_OK) {
-        http.begin("http://www.e607.com/hsia/authentication.php");
-        httpCode = http.GET();
-
-        Logger.print("GET code: ");
-        Logger.println(httpCode);
-        Logger.println(http.getString());
-      }
     }
 
     toState(connect_to_mqtt);
@@ -537,6 +528,10 @@ void doActions(JsonObject& senses) {
         else if (value >= action.getThreshold() + action.getDelta()) {
           Logger.println("GPIO should be high");
           ensureGpio(action.getGpio(), HIGH);
+        }
+        else {
+          Logger.println("Preserving GPIO state");
+          GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
         }
       }
     }
