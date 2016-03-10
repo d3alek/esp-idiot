@@ -11,6 +11,9 @@ void Action::buildThresholdDeltaString(char* thresholdDeltaString, int threshold
 }
 
 void Action::parseThresholdDeltaString(const char* thresholdDeltaString) {
+  if (thresholdDeltaString == NULL) {
+    return;
+  }
   int bufferSize = 10;
   char buffer[bufferSize];
   int i;
@@ -55,8 +58,8 @@ Action::Action() {
 
 void Action::_init() {
   strcpy(_sense,"");
-  _delta = 0;
-  _threshold = 0;
+  _delta = -1;
+  _threshold = -1;
 }
 
 int Action::getThreshold() {
@@ -71,9 +74,13 @@ int Action::getGpio() {
   return _gpio;
 }
 
-void Action::fromConfig(const char* senseAndGpioString, const char* thresholdDeltaString, Action* action) {
+bool Action::fromConfig(const char* senseAndGpioString, const char* thresholdDeltaString, Action* action) {
   action->parseSenseAndGpio(senseAndGpioString);
   action->parseThresholdDeltaString(thresholdDeltaString);
+  if (action->getDelta() == -1) {
+    return false;
+  }
+  return true;
 }
 
 void Action::parseSenseAndGpio(const char* senseAndGpioString) {

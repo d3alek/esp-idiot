@@ -27,6 +27,7 @@ using namespace std;
 bool assertAction(Action, float, float);
 void buildThresholdDeltaString();
 void parseThresholdDeltaString();
+void parseNullThresholdDeltaString();
 void buildSenseAndGpioString();
 void parseSenseAndGpioString();
 void gpioState();
@@ -43,10 +44,12 @@ void run_tests() {
     printf("2\n");
     parseThresholdDeltaString();
     printf("3\n");
-    buildSenseAndGpioString();
+    parseNullThresholdDeltaString();
     printf("4\n");
-    parseSenseAndGpioString();
+    buildSenseAndGpioString();
     printf("5\n");
+    parseSenseAndGpioString();
+    printf("6\n");
     gpioState();
 }
 
@@ -65,6 +68,14 @@ void parseThresholdDeltaString() {
     Action result;
 
     result.parseThresholdDeltaString("10~3");
+
+    assertAction(result, 10, 3);
+}
+
+void parseNullThresholdDeltaString() {
+    Action result;
+
+    result.parseThresholdDeltaString(NULL);
 
     assertAction(result, 10, 3);
 }

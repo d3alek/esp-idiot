@@ -1,4 +1,4 @@
-#define VERSION "44.3"
+#define VERSION "45.2"
 
 #include <Arduino.h>
 
@@ -663,8 +663,12 @@ void loadActions(JsonObject& actionsJson) {
     if (Action::looksLikeAction(key)) {
       configChanged = true;
       Action action;
-      Action::fromConfig(key, it->value, &action);
-
+      bool success = Action::fromConfig(key, it->value, &action);
+      if (!success) {
+        Logger.print("Could not parse action: ");
+        action.printTo(Logger);
+        continue;
+      }
       Logger.print("Found configured action on sense: ");
       Logger.println(action.getSense());
       

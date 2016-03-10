@@ -1,7 +1,9 @@
 #ifndef ACTION_H
 #define ACTION_H
 
+#ifndef _TEST_
 #include "IdiotLogger.h"
+#endif
 
 class Action {
   public:
@@ -9,7 +11,7 @@ class Action {
     Action(const char*);
     static bool looksLikeAction(const char*);
     static void buildThresholdDeltaString(char*, int, int);
-    static void fromConfig(const char*, const char*, Action*);
+    static bool fromConfig(const char*, const char*, Action*);
     void parseThresholdDeltaString(const char*);
     void buildSenseAndGpioString(char*);
     void setGpio(int);

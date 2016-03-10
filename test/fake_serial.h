@@ -30,4 +30,14 @@ public:
   void println(const char*);
 };
 
+class IdiotLogger {
+public:
+  void begin(unsigned long);
+  void end();
+  size_t write(const unsigned char*, size_t);
+  void print(const char*);
+  void println(const char*);
+};
+
 extern FakeSerial Serial;
+extern IdiotLogger Logger;
