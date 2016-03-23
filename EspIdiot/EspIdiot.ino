@@ -259,6 +259,7 @@ void loop(void)
   idiotWifiServer.handleClient();
   
   if (state == boot) {
+    wifiConnectAttempts = 0;
     mqttConnectAttempts = 0;
     
     configChanged = false;
