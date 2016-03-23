@@ -1,4 +1,4 @@
-#define VERSION "45.2"
+#define VERSION "47"
 
 #include <Arduino.h>
 
@@ -52,6 +52,7 @@ ADC_MODE(ADC_VCC);
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
+#define MAX_ACTIONS_SIZE 10
 
 unsigned long publishInterval;
 
@@ -87,13 +88,15 @@ char readSensesResult[MAX_READ_SENSES_RESULT_SIZE];
 
 char finalState[MAX_STATE_JSON_LENGTH];
 
-Action actions[10];
+Action actions[MAX_ACTIONS_SIZE];
 int actionsSize;
 
 unsigned long lastPublishedAtMillis;
 unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
+
+bool couldNotParseAction;
 
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
@@ -272,7 +275,8 @@ void loop(void)
     dht22Pin = -1;
     oneWirePin = -1;
     gpioSensePin = -1;
-    
+
+    couldNotParseAction = false;
     if (!PersistentStore.wifiCredentialsStored()) {
       toState(serve_locally);
       serveLocallySeconds = 60;
@@ -390,7 +394,7 @@ void loop(void)
       return; // do not move to next state yet
     }
     else {
-      if (configChanged) {
+      if (configChanged || couldNotParseAction) {
         saveConfig();
       }
       toState(read_senses);
@@ -667,15 +671,50 @@ void loadActions(JsonObject& actionsJson) {
       if (!success) {
         Logger.print("Could not parse action: ");
         action.printTo(Logger);
+        couldNotParseAction = true;
         continue;
       }
-      Logger.print("Found configured action on sense: ");
-      Logger.println(action.getSense());
-      
-      actions[actionsSize] = action;
-      actionsSize++;
+      Logger.print("Found configured action: ");
+      action.printTo(Logger);
+
+      bool foundSameSenseGpio = false;
+      for (int i = 0; i < actionsSize; ++i) {
+        if (strcmp(actions[i].getSense(), action.getSense()) == 0
+            && actions[i].getGpio() == action.getGpio()) {
+              Logger.print("Replacing: ");
+              actions[i].printTo(Logger);
+              foundSameSenseGpio = true;
+              if (action.getDelta() == -2) {
+                Logger.println("Removing action because delta is -2");
+                removeAction(i);
+              }
+              else {
+                actions[i] = action;
+              }
+              break;
+            }
+      }
+      if (!foundSameSenseGpio) {
+        if (action.getDelta() == -2) {
+          Logger.println("Removing action because delta is -2");
+        }
+        else if (actionsSize + 1 >= MAX_ACTIONS_SIZE) {
+          Logger.println("Too many actions already, ignoring this one/");
+        }
+        else {
+          actions[actionsSize] = action;
+          actionsSize++;
+        }
+      }
     }
   }
+}
+
+void removeAction(int index) {
+  for (int i = index; i < actionsSize - 1; ++i) {
+    actions[i] = actions[i+1];
+  }
+  actionsSize = actionsSize - 1;
 }
 
 void loadGpioConfig(JsonObject& gpio) {
