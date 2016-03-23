@@ -43,8 +43,16 @@ void Action::setGpio(int gpio) {
   _gpio = gpio;
 }
 
+void Action::setAboveThresholdGpioState(bool state) {
+    _aboveThresholdGpioState = state;
+}
+
 const char* Action::getSense() {
   return _sense;
+}
+
+bool Action::getAboveThresholdGpioState() {
+    return _aboveThresholdGpioState;
 }
 
 Action::Action(const char* sense) {
@@ -75,6 +83,9 @@ int Action::getGpio() {
 }
 
 bool Action::fromConfig(const char* senseAndGpioString, const char* thresholdDeltaString, Action* action) {
+  if (strlen(senseAndGpioString) < 3) {
+      return false;
+  }
   action->parseSenseAndGpio(senseAndGpioString);
   action->parseThresholdDeltaString(thresholdDeltaString);
   if (action->getDelta() == -1) {
@@ -84,22 +95,34 @@ bool Action::fromConfig(const char* senseAndGpioString, const char* thresholdDel
 }
 
 void Action::parseSenseAndGpio(const char* senseAndGpioString) {
-  // string begins with A| which stands for Action - skip the first 2 characters then
-  int stringLength = strlen(senseAndGpioString);
-  const char* gpioBegin = strchr(senseAndGpioString+2, (int)'|') + 1;
-  int senseLength = gpioBegin-senseAndGpioString-3;
-  strncpy(_sense, senseAndGpioString+2, senseLength);
-  _sense[senseLength]='\0';
-  _gpio = atoi(gpioBegin);
+    int stringLength = strlen(senseAndGpioString);
+    // string begins with A| which stands for Action  - skip the first 2 characters then
+    int toSkip = 2;
+    const char* gpioBegin = strchr(senseAndGpioString+toSkip, (int)'|') + 1;
+    int senseLength = gpioBegin-senseAndGpioString-toSkip-1;
+    strncpy(_sense, senseAndGpioString+toSkip, senseLength);
+    _sense[senseLength]='\0';
+    _gpio = atoi(gpioBegin);
+
+    if (senseAndGpioString[stringLength-1] == 'L') {
+        _aboveThresholdGpioState = 0;
+    }
+    else if (senseAndGpioString[stringLength-1] == 'H') {
+        _aboveThresholdGpioState = 1;
+    }
+    else {
+        _aboveThresholdGpioState = 1;
+    }
 }
 
 void Action::buildSenseAndGpioString(char* senseAndGpioString) {
-  strcpy(senseAndGpioString, "A|");
-  strcat(senseAndGpioString, _sense);
-  strcat(senseAndGpioString, "|");
-  char buf[4];
-  sprintf(buf, "%d", _gpio);
-  strcat(senseAndGpioString, buf);
+    strcpy(senseAndGpioString, "A|");
+    strcat(senseAndGpioString, _sense);
+    strcat(senseAndGpioString, "|");
+    char buf[4];
+    sprintf(buf, "%d", _gpio);
+    strcat(senseAndGpioString, buf);
+    strcat(senseAndGpioString, _aboveThresholdGpioState ? "H":"L");
 }
 
 bool Action::looksLikeAction(const char* string) {
@@ -107,6 +130,6 @@ bool Action::looksLikeAction(const char* string) {
 }
 
 void Action::printTo(IdiotLogger logger) {
-  logger.printf("%s[t:%d,d:%d,g:%d]\n",_sense,_threshold,_delta, _gpio);
+  logger.printf("%s[t:%d,d:%d,g:%d-%d]\n",_sense,_threshold,_delta, _gpio, _aboveThresholdGpioState);
 }
 

@@ -1,4 +1,4 @@
-#define VERSION "47"
+#define VERSION "49.1"
 
 #include <Arduino.h>
 
@@ -510,29 +510,19 @@ void doActions(JsonObject& senses) {
       Action action = actions[i];
       Logger.print("Configured action ");
       action.printTo(Logger);
-      int value = -2;
-      if (it->value.is<int>()) {
-        value = it->value;
-      }
-      else if (it->value.is<const char*>()) {
-        const char* valueString = it->value;
-        Logger.printf("Value String [%s]\n", valueString);
-        if (valueString == NULL) {
-          Logger.println("Could not parse value integer as value is null");
-        }
-        else {
-          value = atoi(it->value);
-        }
-      }
       if (!strcmp(action.getSense(), key)) {
+        int value = parseValue(it->value); 
+        bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
         Logger.printf("Found sense for the action with value [%d]\n", value);
         if (value <= action.getThreshold() - action.getDelta()) {
-          Logger.println("GPIO should be low");
-          ensureGpio(action.getGpio(), LOW);
+          Logger.println("Value is below threshold. GPIO should be ");
+          Logger.println(aboveThresholdGpioState == LOW ? "high" : "low");
+          ensureGpio(action.getGpio(), !aboveThresholdGpioState);
         }
         else if (value >= action.getThreshold() + action.getDelta()) {
-          Logger.println("GPIO should be high");
-          ensureGpio(action.getGpio(), HIGH);
+          Logger.println("Value is above threshold. GPIO should be ");
+          Logger.println(aboveThresholdGpioState == LOW ? "low" : "high");
+          ensureGpio(action.getGpio(), aboveThresholdGpioState);
         }
         else {
           Logger.println("Preserving GPIO state");
@@ -541,6 +531,24 @@ void doActions(JsonObject& senses) {
       }
     }
   }
+}
+
+int parseValue(JsonVariant& valueObject) {
+    int value = -2;
+    if (valueObject.is<int>()) {
+        value = valueObject;
+    }
+    else if (valueObject.is<const char*>()) {
+        const char* valueString = valueObject;
+        Logger.printf("Value String [%s]\n", valueString);
+        if (valueString == NULL) {
+            Logger.println("Could not parse value integer as value is null");
+        }
+        else {
+            value = atoi(valueObject);
+        }
+    }
+    return value;
 }
 
 void ensureGpio(int gpio, int state) {

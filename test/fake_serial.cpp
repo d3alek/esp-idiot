@@ -1,26 +1,8 @@
-/*
-  DSM2_tx implements the serial communication protocol used for operating
-  the RF modules that can be found in many DSM2-compatible transmitters.
-
-  Copyrigt (C) 2012  Erik Elmore <erik@ironsavior.net>
-
-  This program is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <http://www.gnu.org/licenses/>.  
-*/
-
 #include <cstring>
+#include <cstdio>
 #include <iostream>
 #include <iomanip>
+#include <stdarg.h>
 
 #include "fake_serial.h"
 
@@ -53,14 +35,49 @@ size_t FakeSerial::write( const unsigned char buf[], size_t size ) {
   return size;
 }
 
+void FakeSerial::print(int string) {
+    std::cout << string;
+}
+
+void FakeSerial::println(int string) {
+    std::cout << string << "\n";
+}
+
+void FakeSerial::println(unsigned char b, int type) {
+    std::cout << std::hex << int(b) << "\n";
+}
+
+void FakeSerial::println() {
+    std::cout << "\n";
+}
+
+void FakeSerial::print(unsigned char b, int type) {
+    std::cout << std::hex << int(b);
+}
+
 void FakeSerial::print(const char* string) {
-  using namespace std;
-  cout << string;
+    std::cout << string;
 }
 
 void FakeSerial::println(const char* string) {
-  using namespace std;
-  cout << string << endl;
+    std::cout << string << "\n";
+}
+
+int FakeSerial::printf(const char * format, ...) {
+    va_list args;
+    va_start(args, format);
+    char result[100];
+    vsprintf(result, format, args);
+    std::cout << result;
+    return 0;
+}
+
+void FakeSerial::print(String string) {
+    std::cout << string;
+}
+
+void FakeSerial::println(String string) {
+    std::cout << string << "\n";
 }
 
 FakeSerial Serial;

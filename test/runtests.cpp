@@ -28,8 +28,10 @@ bool assertAction(Action, float, float);
 void buildThresholdDeltaString();
 void parseThresholdDeltaString();
 void parseNullThresholdDeltaString();
-void buildSenseAndGpioString();
-void parseSenseAndGpioString();
+void buildHighSenseAndGpioString();
+void buildLowSenseAndGpioString();
+void parseHighSenseAndGpioString();
+void parseLowSenseAndGpioString();
 void gpioState();
 void run_tests();
 
@@ -46,10 +48,14 @@ void run_tests() {
     printf("3\n");
     parseNullThresholdDeltaString();
     printf("4\n");
-    buildSenseAndGpioString();
+    buildLowSenseAndGpioString();
     printf("5\n");
-    parseSenseAndGpioString();
+    buildHighSenseAndGpioString();
     printf("6\n");
+    parseLowSenseAndGpioString();
+    printf("7\n");
+    parseHighSenseAndGpioString();
+    printf("8\n");
     gpioState();
 }
 
@@ -77,16 +83,17 @@ void parseNullThresholdDeltaString() {
 
     result.parseThresholdDeltaString(NULL);
 
-    assertAction(result, 10, 3);
+    assertAction(result, -1, -1);
 }
 
-void buildSenseAndGpioString() {
+void buildHighSenseAndGpioString() {
     char result[30];
     Action action("sense");
     action.setGpio(10);
+    action.setAboveThresholdGpioState(HIGH);
     action.buildSenseAndGpioString(result);
 
-    if (strcmp(result, "A|sense|10")) {
+    if (strcmp(result, "A|sense|10H")) {
         printf("Wrong sense and gpio string: %s\n", result);
     }
     else {
@@ -94,9 +101,24 @@ void buildSenseAndGpioString() {
     }
 }
 
-void parseSenseAndGpioString() {
+void buildLowSenseAndGpioString() {
+    char result[30];
+    Action action("sense");
+    action.setGpio(10);
+    action.setAboveThresholdGpioState(LOW);
+    action.buildSenseAndGpioString(result);
+
+    if (strcmp(result, "A|sense|10L")) {
+        printf("Wrong sense and gpio string: %s\n", result);
+    }
+    else {
+        printf("Test passed.\n");
+    }
+}
+
+void parseLowSenseAndGpioString() {
     Action action;
-    const char* senseAndGpioString = "A|sense|12";
+    const char* senseAndGpioString = "A|sense|12L";
     action.parseSenseAndGpio(senseAndGpioString);
 
     if (strcmp(action.getSense(), "sense")) {
@@ -105,10 +127,34 @@ void parseSenseAndGpioString() {
     else if (action.getGpio() != 12) {
         printf("Wrong gpio parsed: %d\n", action.getGpio());
     }
+    else if (action.getAboveThresholdGpioState() != LOW) {
+        printf("Wrong above-threshold-gpio-state parsed: %d\n", action.getAboveThresholdGpioState());
+    }
     else {
         printf("Test passed.\n");
     }
 }
+
+void parseHighSenseAndGpioString() {
+    Action action;
+    const char* senseAndGpioString = "A|sense|12H";
+    action.parseSenseAndGpio(senseAndGpioString);
+
+    if (strcmp(action.getSense(), "sense")) {
+        printf("Wrong sense parsed: %s\n", action.getSense());
+    }
+    else if (action.getGpio() != 12) {
+        printf("Wrong gpio parsed: %d\n", action.getGpio());
+    }
+    else if (action.getAboveThresholdGpioState() != HIGH) {
+        printf("Wrong above-threshold-gpio-state parsed: %d\n", action.getAboveThresholdGpioState());
+    }
+    else {
+        printf("Test passed.\n");
+    }
+}
+
+
 
 void gpioState() {
     GpioState.clear();

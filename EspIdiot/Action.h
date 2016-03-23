@@ -15,6 +15,8 @@ class Action {
     void parseThresholdDeltaString(const char*);
     void buildSenseAndGpioString(char*);
     void setGpio(int);
+    void setAboveThresholdGpioState(bool);
+    bool getAboveThresholdGpioState();
     
     const char* getSense();
     int getThreshold();
@@ -28,6 +30,7 @@ class Action {
     int _delta;
     int _threshold;
     int _gpio;
+    bool _aboveThresholdGpioState;
 
     void _init();
 };
