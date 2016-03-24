@@ -1,4 +1,4 @@
-#define VERSION "49.1"
+#define VERSION "50"
 
 #include <Arduino.h>
 
