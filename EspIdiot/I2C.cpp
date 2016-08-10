@@ -47,14 +47,17 @@ void I2C::scan(IdiotLogger Logger) {
     {
       Logger.print("I2C device found at ");
       Logger.println(address);
-
-	  devices[devices_size++] = address;
+	    devices[devices_size++] = address;
+      if (devices_size >= MAX_DEVICES) {
+        Logger.println("I2C device limit reached");
+        break;
+      }
     }
     else if (error==4) 
     {
       Logger.print("Unknow error at address ");
       Logger.println(address);
-    }    
+    }
   }
 
   Logger.print(devices_size);

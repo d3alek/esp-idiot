@@ -59,6 +59,7 @@ ADC_MODE(ADC_VCC);
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
+#define SENSOR_POWER_PIN 13
 
 unsigned long publishInterval;
 
@@ -292,6 +293,8 @@ void loop(void)
       toState(connect_to_wifi);
     }
 
+    ensureGpio(SENSOR_POWER_PIN, 0);
+
     return;
   }
   else if (state == serve_locally) {
@@ -408,6 +411,9 @@ void loop(void)
     }
   }
   else if (state == read_senses) {
+    ensureGpio(SENSOR_POWER_PIN, 1);
+    delay(500);
+    
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
     JsonObject& senses = jsonBuffer.createObject();
     
@@ -447,6 +453,8 @@ void loop(void)
     Logger.printf("readSensesResult: %s\n", readSensesResult);
 
     doActions(senses);
+
+    ensureGpio(SENSOR_POWER_PIN, 0);
     
     readInternalVoltage();
     
