@@ -1,4 +1,4 @@
-#define VERSION "51"
+#define VERSION "52"
 
 #include <Arduino.h>
 
@@ -585,7 +585,7 @@ void ensureGpio(int gpio, int state) {
     Logger.print("Changing GPIO ");
     Logger.print(gpio);
     Logger.print(" to ");
-    Logger.print(state);
+    Logger.println(state);
     
     pinMode(gpio, OUTPUT);
     digitalWrite(gpio, state);
