@@ -345,31 +345,43 @@ void loop(void)
     return;
   }
   else if (state == connect_to_internet) {
-    const char* url = "http://clients3.google.com/generate_204";
+    const char* googleGenerate204 = "http://clients3.google.com/generate_204";
     HTTPClient http;
-    Logger.println("[HTTP] begin..");
-    http.begin(url);
-    
-    Logger.println("[HTTP] get...");
+    Logger.print("[HTTP] Testing for redirection using");
+    Logger.println(googleGenerate204);
+    http.begin(googleGenerate204);
     int httpCode = http.GET();
 
     if (httpCode != 204) {
-      Logger.print("GET code: ");
+      Logger.print("[HTTP] Redirection detected. GET code: ");
       Logger.println(httpCode);
 
       String payload = http.getString();
       Logger.println(payload);
 
+      Logger.println("[HTTP] Trying to get past it...");
       http.begin("http://1.1.1.1/login.html");
       http.addHeader("Content-Type", "application/x-www-form-urlencoded");
       httpCode = http.POST(String("username=guest&password=guest&buttonClicked=4"));
 
-      Logger.print("POST code: ");
+      Logger.print("[HTTP] POST code: ");
       Logger.println(httpCode);
       Logger.println(http.getString());
     }
 
-    toState(connect_to_mqtt);
+    Logger.println("[HTTP] Testing for redirection again");
+    http.begin(googleGenerate204);
+    httpCode = http.GET();
+    if (httpCode != 204) {
+      Logger.print("[HTTP] Redirection detected. GET code: ");
+      Logger.println(httpCode);
+      Logger.println("[HTTP] Could not connect to the internet - stuck behind a login page.");
+      toState(load_config);
+    }
+    else {
+      Logger.println("[HTTP] Successfully passed the login page.");
+      toState(connect_to_mqtt);
+    }
   }
   else if (state == connect_to_mqtt) {
     while (mqttConnectAttempts++ < MAX_MQTT_CONNECT_ATTEMPTS && !mqttConnect()) { 
