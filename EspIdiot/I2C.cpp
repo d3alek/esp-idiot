@@ -47,6 +47,11 @@ void I2C::scan(IdiotLogger Logger) {
     {
       Logger.print("I2C device found at ");
       Logger.println(address);
+      if (address < 8) {
+        Logger.println("Must be an error - no I2C device should have an address below 8. Assuming floating I2C bus and returning no results.");
+        devices_size = 0;
+        return;     
+      }
 	    devices[devices_size++] = address;
       if (devices_size >= MAX_DEVICES) {
         Logger.println("I2C device limit reached");
