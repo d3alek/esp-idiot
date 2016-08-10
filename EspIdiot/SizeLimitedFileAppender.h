@@ -1,5 +1,5 @@
-#ifndef SizeLimitedFileAppender_h
-#define SizeLimitedFileAppender_h
+#ifndef SizeLimitedFileAppender_H
+#define SizeLimitedFileAppender_H
 
 #define BUFFER_SIZE 300
 #define TEMP_FILE "SizeLimitedFileAppender.temp"

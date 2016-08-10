@@ -1,4 +1,4 @@
-#define VERSION "50"
+#define VERSION "51"
 
 #include <Arduino.h>
 
@@ -24,6 +24,9 @@
 #include <OneWire.h>
 #include "OneWireSensors.h"
 
+#include <Wire.h>
+#include "I2C.h"
+
 #include "Action.h"
 
 #include "EspControl.h"
@@ -35,6 +38,9 @@
 
 #include "State.h"
 #include "IdiotWifiServer.h"
+
+#define I2C_PIN_1 12
+#define I2C_PIN_2 14
 
 ADC_MODE(ADC_VCC);
 
@@ -434,6 +440,8 @@ void loop(void)
     if (gpioSensePin != -1) {
       senses[GPIO_SENSE] = gpioSensePin;
     }
+
+    IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
 
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
