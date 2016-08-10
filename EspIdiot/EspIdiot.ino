@@ -84,7 +84,7 @@ int wifiConnectAttempts = 0;
 
 int state = boot;
 
-IdiotLogger Logger;
+IdiotLogger Logger(false);
 IdiotWifiServer idiotWifiServer;
 
 int dht11Pin = -1;

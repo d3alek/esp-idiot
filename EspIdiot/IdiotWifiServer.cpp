@@ -9,7 +9,7 @@ static const char* updateIndex = "<form method='POST' action='/update' enctype='
 ESP8266WebServer server(80);
 
 char _localPublishFile[20];        
-IdiotLogger _logger;
+IdiotLogger _logger(false);
 char _uuid[15];
 bool started = false;
 

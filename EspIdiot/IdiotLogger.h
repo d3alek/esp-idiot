@@ -10,7 +10,7 @@
 // following the example of https://code.google.com/p/arduino/source/browse/trunk/hardware/arduino/cores/arduino/HardwareSerial.h?r=982
 class IdiotLogger : public Stream {
   public:
-    IdiotLogger();
+    IdiotLogger(bool logToFile);
     ~IdiotLogger();
     void begin();
     void close();
@@ -22,6 +22,7 @@ class IdiotLogger : public Stream {
     using Print::write;
   private:
     SizeLimitedFileAppender _logFile;
+    bool _logToFile;
 };
 
 #endif
