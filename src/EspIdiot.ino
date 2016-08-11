@@ -651,17 +651,17 @@ void loadConfig(char* string) {
   }
   
   if (root.containsKey("state")) {
-    loadConfig(root["state"]["config"]); // properly formatted config stored in flash
+    loadConfigFromJson(root["state"]["config"]); // properly formatted config stored in flash
   }
   else if (root.containsKey("delta")) {
-    loadConfig(root["delta"]); // buggy IoT json
+    loadConfigFromJson(root["delta"]); // buggy IoT json
   }
   else {
     Logger.println("Empty delta");
   }
 }
 
-void loadConfig(JsonObject& config) {
+void loadConfigFromJson(JsonObject& config) {
   if (config.containsKey("version")) {
     const char* version = config["version"];
     if (strcmp(version, VERSION) == 0) {

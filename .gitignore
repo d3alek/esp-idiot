@@ -2,3 +2,5 @@ MQTTConfig.h
 .build
 .deps
 runtests
+venv
+.pioenvs
