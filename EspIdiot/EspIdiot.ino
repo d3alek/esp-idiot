@@ -1,4 +1,4 @@
-#define VERSION "52"
+#define VERSION "53"
 
 #include <Arduino.h>
 
@@ -281,7 +281,7 @@ void loop(void)
     
     dht11Pin = -1;
     dht22Pin = -1;
-    oneWirePin = -1;
+    oneWirePin = 4;
     gpioSensePin = -1;
 
     couldNotParseAction = false;
