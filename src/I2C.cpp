@@ -9,23 +9,46 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
   int value;
   for (int i = 0; i < devices_size; ++i) {
     int device = devices[i];
-    Wire.requestFrom(device, 1);
-    int read_size = 0;
-    while (Wire.available()) {
-        value = Wire.read();
-        read_size++;
-    }
- 
-    Logger.print(read_size);
-    Logger.println(" bytes read");
+
     char key[10] = "I2C-";
     sprintf(key, "I2C-%d", device);
-
-    Logger.print(key);
-    Logger.print(" reads ");
-    Logger.println(value);
-
-    jsonObject[String(key)] = value;
+  
+    if (device == 32) { // Address of the capacitive soil moisture sensor
+        I2CSoilMoistureSensor sensor; 
+        sensor.begin();
+        delay(3000);
+        Logger.print("I2C Soil Moisture Sensor Software Firmware Version: ");
+        Logger.println(sensor.getVersion(), HEX);
+        Logger.print("Soil Moisture Capacitance: ");
+        int capacitance = sensor.getCapacitance();
+        Logger.print(capacitance);
+        Logger.print(", Temperature: ");
+        int temperature = sensor.getTemperature(); // divide by 10 to get real value. Not doing it here because arduino cannot sprintf floats.
+        Logger.print(temperature);
+        Logger.print(", Light: ");
+        sensor.startMeasureLight();
+        delay(9000);
+        int light = sensor.getLight();
+        Logger.println(light);
+        char valueString[20] = "";
+        sprintf(valueString, "%d-%d-%d", capacitance, temperature, light);
+        jsonObject[String(key)] = String(valueString);
+    }
+    else {
+        Wire.requestFrom(device, 1);
+        int read_size = 0;
+        while (Wire.available()) {
+            value = Wire.read();
+            read_size++;
+        }
+    
+        Logger.print(read_size);
+        Logger.println(" bytes read");
+        Logger.print(key);
+        Logger.print(" reads ");
+        Logger.println(value);
+        jsonObject[String(key)] = value;
+    }    
   }
 }
 

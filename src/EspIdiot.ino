@@ -1,4 +1,4 @@
-#define VERSION "53.1"
+#define VERSION "54"
 
 #include <Arduino.h>
 
@@ -39,6 +39,8 @@
 #include "State.h"
 #include "IdiotWifiServer.h"
 
+#include "I2CSoilMoistureSensor.h"
+
 #define I2C_PIN_1 12
 #define I2C_PIN_2 14
 
@@ -70,7 +72,7 @@ const char uuidPrefix[] = "ESP";
 WiFiClient wclient;
 PubSubClient mqttClient(wclient);
 
-float voltage = NAN;
+int voltage = NAN;
 
 int sleepSeconds = DEFAULT_SLEEP_SECONDS;
 
@@ -424,11 +426,11 @@ void loop(void)
   }
   else if (state == read_senses) {
     ensureGpio(SENSOR_POWER_PIN, 1);
-    delay(500);
-    
+    delay(2000);
+
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
     JsonObject& senses = jsonBuffer.createObject();
-    
+
     if (dht11Pin != -1) {
       DHT dht11(dht11Pin, DHT11);
       dht11.begin();

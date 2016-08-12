@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include "Wire.h"
 #include "IdiotLogger.h"
+#include "I2CSoilMoistureSensor.h"
 
 #define MAX_DEVICES 10
 
