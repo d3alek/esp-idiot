@@ -1,4 +1,4 @@
-#define VERSION "53"
+#define VERSION "53.1"
 
 #include <Arduino.h>
 
@@ -647,6 +647,8 @@ void loadConfig(char* string) {
   if (!root.success()) {
     Logger.print("Could not parse JSON from config string: ");
     Logger.println(string);
+    Logger.println("Writing in a new valid config.");
+    saveConfig();
     return;
   }
   
