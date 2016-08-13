@@ -1,4 +1,4 @@
-#define VERSION "54"
+#define VERSION "55"
 
 #include <Arduino.h>
 
@@ -349,7 +349,7 @@ void loop(void)
   else if (state == connect_to_internet) {
     const char* googleGenerate204 = "http://clients3.google.com/generate_204";
     HTTPClient http;
-    Logger.print("[HTTP] Testing for redirection using");
+    Logger.print("[HTTP] Testing for redirection using ");
     Logger.println(googleGenerate204);
     http.begin(googleGenerate204);
     int httpCode = http.GET();
@@ -369,21 +369,28 @@ void loop(void)
       Logger.print("[HTTP] POST code: ");
       Logger.println(httpCode);
       Logger.println(http.getString());
-    }
 
-    Logger.println("[HTTP] Testing for redirection again");
-    http.begin(googleGenerate204);
-    httpCode = http.GET();
-    if (httpCode != 204) {
-      Logger.print("[HTTP] Redirection detected. GET code: ");
-      Logger.println(httpCode);
-      Logger.println("[HTTP] Could not connect to the internet - stuck behind a login page.");
-      toState(load_config);
+      Logger.println("[HTTP] Testing for redirection again");
+      http.begin(googleGenerate204);
+      httpCode = http.GET();
+      if (httpCode != 204) {
+        Logger.print("[HTTP] Redirection detected. GET code: ");
+        Logger.println(httpCode);
+        Logger.println("[HTTP] Could not connect to the internet - stuck behind a login page.");
+        toState(load_config);
+      }
+      else {
+        Logger.println("[HTTP] Successfully passed the login page.");
+        toState(connect_to_mqtt);
+      }
     }
     else {
-      Logger.println("[HTTP] Successfully passed the login page.");
+      Logger.println("[HTTP] Successful internet connectivity test.");
       toState(connect_to_mqtt);
     }
+
+
+
   }
   else if (state == connect_to_mqtt) {
     while (mqttConnectAttempts++ < MAX_MQTT_CONNECT_ATTEMPTS && !mqttConnect()) { 
@@ -508,9 +515,11 @@ void loop(void)
     Logger.println(finalState);
     Logger.print("Publishing to ");
     Logger.println(topic);
-    mqttClient.publish(topic, finalState);
+    bool success = mqttClient.publish(topic, finalState);
+    if (!success) {
+        Logger.println("Failed to publish.");    
+    }
     lastPublishedAtMillis = millis();
-    yield();
     
     toState(deep_sleep);
   }
@@ -601,7 +610,10 @@ void requestState() {
   strcat(topic, "/get");
   Logger.print("Publishing to ");
   Logger.println(topic);
-  mqttClient.publish(topic, "{}");
+  bool success = mqttClient.publish(topic, "{}");
+  if (!success) {
+    Logger.println("Failed to publish.");    
+  }
 }
 
 void readInternalVoltage() {
