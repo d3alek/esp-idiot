@@ -16,3 +16,13 @@ pip install -r requirements.txt
 
 # download dependencies, compile and upload to chip (you must have programmer attached)
 pio run -t upload
+
+# if you get
+warning: espcomm_sync failed
+error: espcomm_open failed
+error: espcomm_upload_mem failed
+*** [upload] Error 255
+
+# then reset the ESP (RST to ground) and try again
+# you may need to reset the ESP after every monitor
+# TODO reset from the controller through the RTS line

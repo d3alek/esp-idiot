@@ -4,6 +4,7 @@ MQTTConfig.h
 runtests
 venv
 .pioenvs
+.piolibdeps
 
 # swap
 [._]*.s[a-w][a-z]
