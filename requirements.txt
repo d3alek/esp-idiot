@@ -1,7 +1,9 @@
 bottle==0.12.9
 click==5.1
 colorama==0.3.7
+esptool==1.1
 lockfile==0.12.2
-platformio==2.11.2
+platformio==3.1.0
 pyserial==3.1.1
-requests==2.11.0
+requests==2.11.1
+semantic-version==2.5.0
