@@ -22,7 +22,18 @@ warning: espcomm_sync failed
 error: espcomm_open failed
 error: espcomm_upload_mem failed
 *** [upload] Error 255
-
 # then reset the ESP (RST to ground) and try again
+
+# if you get
+Auto-detected: /dev/ttyUSB0
+Uploading .pioenvs/esp12e/firmware.bin
+error: cannot access /dev/ttyUSB0
+
+error: espcomm_open failed
+error: espcomm_upload_mem failed
+*** [upload] Error 255
+==========================
+# then install 99-platformio-udev.rules as per warning (currently in https://raw.githubusercontent.com/platformio/platformio/develop/scripts/99-platformio-udev.rules)
+
 # you may need to reset the ESP after every monitor
 # TODO reset from the controller through the RTS line
