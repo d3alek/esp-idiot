@@ -1,0 +1,14 @@
+* Download python2.7 and install it (www.python.org/downloads)
+* Download platformio ide for windows (platformio.org) and install it. 
+* Download git for windows (git-for-windows.github.io) and install it. Then clone https://github.com/d3alek/esp-idiot recursively:
+
+$ git clone https://github.com/d3alek/esp-idiot.git --recursive
+
+If you forget to do it recursively, do:
+
+$ cd esp-idiot; git submodule update --init --recursive
+
+* Copy MQTTConfig.h from a working development setup into the src directory 
+* Open the cloned folder as a project in platformio. Building should work - will take a long time at first as it downloads the dependencies. It took around 15 minutes when tested. 
+* Attach to esp with a programmer (see https://github.com/d3alek/esp-idiot/blob/master/docs/esp-12-programming-wire-up.svg), importanty TX, RX and ground, and try monitoring. Serial communicator ft232bl was automatically recognized by Windows 10 and in platformio I had to choose USB Serial Port (COM3).
+* Upload, by first putting the ESP into programming by pulling gpio0 to ground as you power it up.
