@@ -1,4 +1,4 @@
-#define VERSION "55"
+#define VERSION "z01"
 
 #include <Arduino.h>
 
@@ -61,7 +61,6 @@ ADC_MODE(ADC_VCC);
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
-#define SENSOR_POWER_PIN 13
 
 unsigned long publishInterval;
 
@@ -92,7 +91,6 @@ IdiotWifiServer idiotWifiServer;
 int dht11Pin = -1;
 int dht22Pin = -1;
 int oneWirePin = -1;
-int gpioSensePin = -1;
 char readSensesResult[MAX_READ_SENSES_RESULT_SIZE];
 
 char finalState[MAX_STATE_JSON_LENGTH];
@@ -284,7 +282,6 @@ void loop(void)
     dht11Pin = -1;
     dht22Pin = -1;
     oneWirePin = 4;
-    gpioSensePin = -1;
 
     couldNotParseAction = false;
     if (!PersistentStore.wifiCredentialsStored()) {
@@ -294,8 +291,6 @@ void loop(void)
     else {
       toState(connect_to_wifi);
     }
-
-    ensureGpio(SENSOR_POWER_PIN, 0);
 
     return;
   }
@@ -432,7 +427,6 @@ void loop(void)
     }
   }
   else if (state == read_senses) {
-    ensureGpio(SENSOR_POWER_PIN, 1);
     delay(2000);
 
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
@@ -464,10 +458,6 @@ void loop(void)
       IdiotOneWire.readOneWire(Logger, oneWirePin, senses);
     }
 
-    if (gpioSensePin != -1) {
-      senses[GPIO_SENSE] = gpioSensePin;
-    }
-
     IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
 
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
@@ -475,8 +465,6 @@ void loop(void)
 
     doActions(senses);
 
-    ensureGpio(SENSOR_POWER_PIN, 0);
-    
     readInternalVoltage();
     
     toState(local_publish);
@@ -801,9 +789,6 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
   else if (strcmp(device, "OneWire") == 0) {
     oneWirePin = pinNumber;
   }
-  else if (strcmp(device, GPIO_SENSE) == 0) {
-    gpioSensePin = pinNumber;
-  }
 }
 
 // make sure this is synced with makeDevicePinPairing
@@ -819,9 +804,6 @@ void injectConfig(JsonObject& config) {
   }
   if (oneWirePin != -1) {
     gpio.set(String(oneWirePin), "OneWire");
-  }
-  if (gpioSensePin != -1) {
-    gpio.set(String(gpioSensePin), GPIO_SENSE);
   }
 
   JsonObject& actions = config.createNestedObject("actions");

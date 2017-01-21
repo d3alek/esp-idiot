@@ -25,13 +25,7 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         Logger.print(", Temperature: ");
         int temperature = sensor.getTemperature(); // divide by 10 to get real value. Not doing it here because arduino cannot sprintf floats.
         Logger.print(temperature);
-        Logger.print(", Light: ");
-        sensor.startMeasureLight();
-        delay(9000);
-        int light = sensor.getLight();
-        Logger.println(light);
-        char valueString[20] = "";
-        sprintf(valueString, "%d-%d-%d", capacitance, temperature, light);
+        sprintf(valueString, "%d-%d", capacitance, temperature);
         jsonObject[String(key)] = String(valueString);
     }
     else {

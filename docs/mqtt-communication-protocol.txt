@@ -1,0 +1,49 @@
+ESP listens on:
+- update/ESP-# for message of the form:
+{"state": { "config":
+    <config> 
+}}
+- things/ESP-#/delta
+{"delta": {
+    <config> 
+}}
+
+Where <config> is something like:
+{   "version": "55", # if equal to code defined version, do nothing, otherwise search for "idiot-esp-55.bin" in the S3 bucket and flash it
+    "sleep": 10,
+    "gpio": {
+        "3": "OneWire"
+    }
+    "actions": {
+        "<senseAndGpioString>": "<thresholdDeltaString>" 
+    }
+}
+ESP sends messages on:
+- things/ESP-#/get with message {} - this triggers message on things/ESP-#/delta 
+- things/ESP-#/update with message of the form:
+{"state":{"reported": {
+    "version": "55", 
+    "wifi": "ssid", 
+    "state": "publish", 
+    "lawake": "4134134", # last awake millis count
+    "mode": {
+        "1": 0    
+    },
+    "config": {
+        "sleep": 60
+        "gpio": {
+            "5": "DHT11",
+            "6": "DHT22",
+            "7": "OneWire",
+            "8", "gpio-sense"
+        },
+        "actions": {
+            "<senseAndGpioString>": "<thresholdDeltaString>" 
+        }
+    },
+    "senses": {
+        "OW-#": "21.0"
+        "I2C-8": 235
+    },
+    "voltage": 2870
+}}}
