@@ -26,7 +26,7 @@ int mean = 0;
 // calling functions from here does not seem to work, so using only global variables
 void answer_request()
 {  
-  TinyWireS.send(mean*100/255);
+  TinyWireS.send((int)(mean*100/255));
 }
 
 void setup() {

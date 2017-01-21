@@ -130,6 +130,6 @@ bool Action::looksLikeAction(const char* string) {
 }
 
 void Action::printTo(IdiotLogger logger) {
-  //logger.printf("%s[t:%d,d:%d,g:%d-%d]\n",_sense,_threshold,_delta, _gpio, _aboveThresholdGpioState);
+  logger.printf("%s[t:%d,d:%d,g:%d-%d]\n",_sense,_threshold,_delta, _gpio, _aboveThresholdGpioState);
 }
 
