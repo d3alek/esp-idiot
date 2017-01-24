@@ -1,4 +1,4 @@
-#define VERSION "z01"
+#define VERSION "z02"
 
 #include <Arduino.h>
 
@@ -654,15 +654,7 @@ void loadConfig(char* string) {
     return;
   }
   
-  if (root.containsKey("state")) {
-    loadConfigFromJson(root["state"]["config"]); // properly formatted config stored in flash
-  }
-  else if (root.containsKey("delta")) {
-    loadConfigFromJson(root["delta"]); // buggy IoT json
-  }
-  else {
-    Logger.println("Empty delta");
-  }
+  loadConfigFromJson(root);
 }
 
 void loadConfigFromJson(JsonObject& config) {
@@ -687,17 +679,11 @@ void loadConfigFromJson(JsonObject& config) {
   }
   
   if (config.containsKey("gpio")) {
-    loadGpioConfig(config["gpio"]); // properly formatted config stored in flash
-  }
-  else {
-    loadGpioConfig(config); // buggy IoT json
+    loadGpioConfig(config["gpio"]);
   }
 
   if (config.containsKey("actions")) {
     loadActions(config["actions"]);
-  }
-  else {
-    loadActions(config);
   }
 }
 
@@ -813,10 +799,8 @@ void injectConfig(JsonObject& config) {
 void saveConfig() {
   StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
-  JsonObject& stateObject = root.createNestedObject("state");
-  JsonObject& config = stateObject.createNestedObject("config");
 
-  injectConfig(config);
+  injectConfig(root);
 
   char configString[CONFIG_MAX_SIZE];
   root.printTo(configString, CONFIG_MAX_SIZE);
