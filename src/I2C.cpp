@@ -42,7 +42,7 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         Logger.print(key);
         Logger.print(" reads ");
         Logger.println(value);
-        jsonObject[String(key)] = value;
+        jsonObject[String(key)] = (int)((value*100)/255);
     }    
   }
 }
