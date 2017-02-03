@@ -41,8 +41,12 @@
 
 #include "I2CSoilMoistureSensor.h"
 
-#define I2C_PIN_1 12
-#define I2C_PIN_2 14
+#include "SSD1306.h"
+
+
+#define I2C_POWER 16 
+#define I2C_PIN_1 12 // SDA
+#define I2C_PIN_2 14 // SDC
 
 ADC_MODE(ADC_VCC);
 
@@ -61,6 +65,8 @@ ADC_MODE(ADC_VCC);
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
+
+//SSD1306 display(0x3c, I2C_PIN_1, I2C_PIN_2);
 
 unsigned long publishInterval;
 
@@ -266,6 +272,11 @@ void loop(void)
   idiotWifiServer.handleClient();
   
   if (state == boot) {
+    //display.init();
+    //display.displayOn();
+    //display.setColor(WHITE);
+    //display.drawCircle(0, 0, 10);
+
     wifiConnectAttempts = 0;
     mqttConnectAttempts = 0;
     
@@ -427,6 +438,8 @@ void loop(void)
     }
   }
   else if (state == read_senses) {
+    pinMode(I2C_POWER, OUTPUT);
+    digitalWrite(I2C_POWER, 1);
     delay(2000);
 
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
@@ -467,6 +480,8 @@ void loop(void)
 
     readInternalVoltage();
     
+    digitalWrite(I2C_POWER, 0);
+
     toState(local_publish);
   }
   else if (state == local_publish) {
@@ -512,6 +527,7 @@ void loop(void)
     toState(deep_sleep);
   }
   else if (state == deep_sleep) {
+    //display.displayOff();
     PersistentStore.putLastAwake(millis());
     Logger.println(millis());
 
