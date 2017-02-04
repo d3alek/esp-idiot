@@ -1,5 +1,5 @@
 #include<TinyWireS.h>
-#define I2C_SLAVE_ADDR 9
+#define I2C_SLAVE_ADDR 8
 #define STATUS_UPDATE_FREQUENCY 300
 
 // consult http://highlowtech.org/wp-content/uploads/2011/10/ATtiny45-85.png for pin numbering
@@ -27,7 +27,6 @@ void setup() {
   TinyWireS.onRequest(answer_request);
 
   last_status_light_update = millis();
-  fully_collected_samples = false;
 
   digitalWrite(LED_PIN, 1);
 }
