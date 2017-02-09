@@ -235,7 +235,6 @@ void updateDisplayables(JsonObject& senses) {
   int counter = 0;
   for (JsonObject::iterator it = senses.begin(); it != senses.end(); ++it) {
     displayables[counter++] = Displayable(it->key, parseValue(it->value));
-    Logger.println("Parsed displayable.");
     if (counter >= MAX_DISPLAYABLES) {
       Logger.println("Displayables limit reached.");
     }
@@ -245,6 +244,9 @@ void updateDisplayables(JsonObject& senses) {
 
 
 void updateDisplay() {
+  if (state == serve_locally) {
+    return;
+  }
   display.clear();
   display.print("Zelenik");
   if (displayablesSize > 0 ) {
@@ -576,6 +578,7 @@ void loop(void)
     if (sleepSeconds == 0) {
       WiFi.disconnect();
       toState(boot);
+      delay(1000);
       return;
     }
     
