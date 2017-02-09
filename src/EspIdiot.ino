@@ -41,8 +41,8 @@
 
 #include "I2CSoilMoistureSensor.h"
 
-#include "SSD1306.h"
-
+#include "OLED.h"
+#include "Displayable.h"
 
 #define I2C_POWER 16 
 #define I2C_PIN_1 12 // SDA
@@ -61,12 +61,10 @@ ADC_MODE(ADC_VCC);
 #define MAX_LOCAL_PUBLISH_FILE_BYTES 150000 // 150kb
 #define MAX_READ_SENSES_RESULT_SIZE 300
 #define DELTA_WAIT_SECONDS 2
-#define DEFAULT_PUBLISH_INTERVAL 0
+#define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
-
-//SSD1306 display(0x3c, I2C_PIN_1, I2C_PIN_2);
 
 unsigned long publishInterval;
 
@@ -111,6 +109,14 @@ float serveLocallySeconds;
 
 bool couldNotParseAction;
 
+OLED display(I2C_PIN_1, I2C_PIN_2);
+#define MAX_DISPLAYABLES 5
+#define UPDATE_DISPLAY_SECONDS 3
+Displayable displayables[MAX_DISPLAYABLES];
+int displayablesSize;
+int updateDisplayCounter;
+unsigned long lastUpdateDisplayMillis;
+
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
 Ticker tickerOSWatch;
@@ -133,6 +139,7 @@ void toState(int newState) {
     return;
   }
   Logger.printf("\n[%s] -> [%s]\n", STATE_STRING[state], STATE_STRING[newState]);
+
   state = newState;
 }
 
@@ -224,6 +231,37 @@ void loopResetButton() {
   }
 }
 
+void updateDisplayables(JsonObject& senses) {
+  int counter = 0;
+  for (JsonObject::iterator it = senses.begin(); it != senses.end(); ++it) {
+    displayables[counter++] = Displayable(it->key, parseValue(it->value));
+    Logger.println("Parsed displayable.");
+    if (counter >= MAX_DISPLAYABLES) {
+      Logger.println("Displayables limit reached.");
+    }
+  }
+  displayablesSize = counter;
+}
+
+
+void updateDisplay() {
+  display.clear();
+  display.print("Zelenik");
+  if (displayablesSize > 0 ) {
+    if (millis() - lastUpdateDisplayMillis > UPDATE_DISPLAY_SECONDS*1000) {
+       lastUpdateDisplayMillis = millis();
+       updateDisplayCounter++;
+    }
+    if (updateDisplayCounter >= displayablesSize) {
+      updateDisplayCounter = 0;
+    }
+    display.print((char*)displayables[updateDisplayCounter].getString(), 3, 1);
+  }
+
+  display.print((char*)STATE_STRING[state], 7, 1);
+}
+
+
 void setup(void)
 {
   last_loop = millis();
@@ -261,6 +299,12 @@ void setup(void)
   lastPublishedAtMillis = 0;
   
   WiFi.mode(WIFI_STA);
+
+  display.begin();
+  display.on();
+  displayablesSize = 0;
+  updateDisplayCounter = 0;
+  lastUpdateDisplayMillis = 0;
 }
 
 void loop(void)
@@ -270,12 +314,10 @@ void loop(void)
   loopResetButton();
   
   idiotWifiServer.handleClient();
+
+  updateDisplay();
   
   if (state == boot) {
-    //display.init();
-    //display.displayOn();
-    //display.setColor(WHITE);
-    //display.drawCircle(0, 0, 10);
 
     wifiConnectAttempts = 0;
     mqttConnectAttempts = 0;
@@ -472,11 +514,12 @@ void loop(void)
     }
 
     IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
-
+    
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
 
     doActions(senses);
+    updateDisplayables(senses);
 
     readInternalVoltage();
     
@@ -527,13 +570,11 @@ void loop(void)
     toState(deep_sleep);
   }
   else if (state == deep_sleep) {
-    //display.displayOff();
     PersistentStore.putLastAwake(millis());
     Logger.println(millis());
 
     if (sleepSeconds == 0) {
       WiFi.disconnect();
-      delay(10*1000); // 10 second delay to cool things down
       toState(boot);
       return;
     }
