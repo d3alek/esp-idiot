@@ -293,6 +293,13 @@ OLED::OLED(uint8_t sda, uint8_t scl, uint8_t address, uint8_t offset) {
 	_offset = offset;
 }
 
+OLED::OLED() {
+	_sda = -1;
+	_scl = -1;
+	_address = 0;
+	_offset = 0;
+}
+
 void OLED::begin(void) {
 	// set up i2c
 	Wire.begin(_sda, _scl);

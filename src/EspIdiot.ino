@@ -43,6 +43,7 @@
 
 #include "OLED.h"
 #include "Displayable.h"
+#include "DisplayController.h"
 
 #define I2C_POWER 16 
 #define I2C_PIN_1 12 // SDA
@@ -87,7 +88,7 @@ bool gpioStateChanged = false;
 int mqttConnectAttempts = 0;
 int wifiConnectAttempts = 0;
 
-int state = boot;
+state_enum state = boot;
 
 IdiotLogger Logger(false);
 IdiotWifiServer idiotWifiServer;
@@ -109,13 +110,8 @@ float serveLocallySeconds;
 
 bool couldNotParseAction;
 
-OLED display(I2C_PIN_1, I2C_PIN_2);
-#define MAX_DISPLAYABLES 5
-#define UPDATE_DISPLAY_SECONDS 3
-Displayable displayables[MAX_DISPLAYABLES];
-int displayablesSize;
-int updateDisplayCounter;
-unsigned long lastUpdateDisplayMillis;
+OLED oled(I2C_PIN_1, I2C_PIN_2);
+DisplayController display(oled);
 
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
@@ -133,8 +129,7 @@ void ICACHE_RAM_ATTR osWatch(void) {
   }
 }
 
-
-void toState(int newState) {
+void toState(state_enum newState) {
   if (state == newState) {
     return;
   }
@@ -231,38 +226,6 @@ void loopResetButton() {
   }
 }
 
-void updateDisplayables(JsonObject& senses) {
-  int counter = 0;
-  for (JsonObject::iterator it = senses.begin(); it != senses.end(); ++it) {
-    displayables[counter++] = Displayable(it->key, parseValue(it->value));
-    if (counter >= MAX_DISPLAYABLES) {
-      Logger.println("Displayables limit reached.");
-    }
-  }
-  displayablesSize = counter;
-}
-
-
-void updateDisplay() {
-  if (state == serve_locally) {
-    return;
-  }
-  display.clear();
-  display.print("Zelenik");
-  if (displayablesSize > 0 ) {
-    if (millis() - lastUpdateDisplayMillis > UPDATE_DISPLAY_SECONDS*1000) {
-       lastUpdateDisplayMillis = millis();
-       updateDisplayCounter++;
-    }
-    if (updateDisplayCounter >= displayablesSize) {
-      updateDisplayCounter = 0;
-    }
-    display.print((char*)displayables[updateDisplayCounter].getString(), 3, 1);
-  }
-
-  display.print((char*)STATE_STRING[state], 7, 1);
-}
-
 
 void setup(void)
 {
@@ -301,12 +264,6 @@ void setup(void)
   lastPublishedAtMillis = 0;
   
   WiFi.mode(WIFI_STA);
-
-  display.begin();
-  display.on();
-  displayablesSize = 0;
-  updateDisplayCounter = 0;
-  lastUpdateDisplayMillis = 0;
 }
 
 void loop(void)
@@ -317,7 +274,7 @@ void loop(void)
   
   idiotWifiServer.handleClient();
 
-  updateDisplay();
+  display.refresh(state);
   
   if (state == boot) {
 
@@ -521,7 +478,7 @@ void loop(void)
     Logger.printf("readSensesResult: %s\n", readSensesResult);
 
     doActions(senses);
-    updateDisplayables(senses);
+    display.update(senses);
 
     readInternalVoltage();
     

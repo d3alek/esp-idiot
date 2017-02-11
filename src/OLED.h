@@ -24,6 +24,7 @@
 
 class OLED {
 	public:
+		OLED();
 		OLED(uint8_t sda, uint8_t scl, uint8_t address=0x3c, uint8_t offset=0);
 		void begin(void);
 		void on(void);
