@@ -16,11 +16,14 @@ class DisplayController {
         DisplayController(OLED);
         void refresh(state_enum);
         void update(JsonObject&);
+        void changeMode();
+        void displayDetailed(int);
 
         OLED oled;
         Displayable displayables[MAX_DISPLAYABLES];
         int displayables_size;
         int displayables_counter;
         unsigned long last_refresh_millis;
+        int mode;
 };
 #endif

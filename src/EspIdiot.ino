@@ -1,4 +1,4 @@
-#define VERSION "z03"
+#define VERSION "z04"
 
 #include <Arduino.h>
 
@@ -110,6 +110,7 @@ float serveLocallySeconds;
 
 bool couldNotParseAction;
 
+#define DISPLAY_CONTROL_PIN 0
 OLED oled(I2C_PIN_1, I2C_PIN_2);
 DisplayController display(oled);
 
@@ -210,22 +211,17 @@ bool mqttConnect() {
   return false;
 }
 
-void setupResetButton() {
-  pinMode(HARD_RESET_PIN, INPUT);
-}
-
 void hardReset() {
   toState(hard_reset);
   PersistentStore.clear();
   EspControl.restart();
 }
 
-void loopResetButton() {
-  if(!digitalRead(HARD_RESET_PIN)) {
-    hardReset();
-  }
+void updateDisplayMode() {
+    if (!digitalRead(DISPLAY_CONTROL_PIN)) {
+        display.changeMode();
+    }
 }
-
 
 void setup(void)
 {
@@ -259,21 +255,25 @@ void setup(void)
   Logger.printf("Used bytes: %d Total bytes: %d\n", fsInfo.usedBytes, fsInfo.totalBytes);
 
   PersistentStore.begin();
-  setupResetButton();
   
   lastPublishedAtMillis = 0;
   
   WiFi.mode(WIFI_STA);
+   
+  pinMode(HARD_RESET_PIN, INPUT);
+  delay(1000);
+  if(!digitalRead(HARD_RESET_PIN)) {
+    hardReset();
+  }
 }
 
 void loop(void)
 {
   last_loop = millis();
   
-  loopResetButton();
-  
   idiotWifiServer.handleClient();
 
+  updateDisplayMode();
   display.refresh(state);
   
   if (state == boot) {

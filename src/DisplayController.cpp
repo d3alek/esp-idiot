@@ -5,10 +5,21 @@ DisplayController::DisplayController(OLED oled) {
     displayables_size = 0;
     displayables_counter = 0;
     last_refresh_millis = 0;
+    mode = 0;
 
     oled.begin();
     oled.on();
 }
+
+void DisplayController::displayDetailed(int displayable_index) {
+    if (displayable_index + 1 <= displayables_size) {
+        oled.print((char*)displayables[displayable_index].getString(), 3, 1);
+        char s[5];
+        sprintf(s, "%d/%d", displayable_index+1, displayables_size);
+        oled.print(s, 7, 3);
+    }
+}
+
 
 void DisplayController::refresh(state_enum state) {
     if (state == serve_locally) {
@@ -16,18 +27,24 @@ void DisplayController::refresh(state_enum state) {
     }
     oled.clear();
     oled.print("Zelenik");
-    if (displayables_size > 0 ) {
-        if (millis() - last_refresh_millis > UPDATE_DISPLAY_SECONDS*1000) {
-            last_refresh_millis = millis();
-            displayables_counter++;
-        }
-        if (displayables_counter >= displayables_size) {
-            displayables_counter = 0;
-        }
-        oled.print((char*)displayables[displayables_counter].getString(), 3, 1);
-    }
 
-    oled.print((char*)STATE_STRING[state], 7, 1);
+    if (mode == 0) {
+        if (displayables_size > 0 ) {
+            if (millis() - last_refresh_millis > UPDATE_DISPLAY_SECONDS*1000) {
+                last_refresh_millis = millis();
+                displayables_counter++;
+            }
+            if (displayables_counter >= displayables_size) {
+                displayables_counter = 0;
+            }
+            oled.print((char*)displayables[displayables_counter].getString(), 3, 1);
+        }
+
+        oled.print((char*)STATE_STRING[state], 7, 1);
+    }
+    else if (mode <= displayables_size) {
+        displayDetailed(mode-1);
+    }
 }
 
 void DisplayController::update(JsonObject& senses) {
@@ -53,4 +70,8 @@ int DisplayController::parseInt(JsonVariant& valueObject) {
         }
     }
     return value;
+}
+
+void DisplayController::changeMode() {
+    mode = (mode + 1) % (displayables_size + 1);
 }
