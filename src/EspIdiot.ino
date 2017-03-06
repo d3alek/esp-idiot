@@ -1,4 +1,4 @@
-#define VERSION "z04"
+#define VERSION "z05"
 
 #include <Arduino.h>
 
@@ -32,6 +32,7 @@
 #include "EspControl.h"
 
 #include "GpioState.h"
+#include "GpioMode.h"
 
 // file which defines mqttHostname, mqttPort, mqttUser, mqttPassword
 #include "MQTTConfig.h"
@@ -107,8 +108,6 @@ unsigned long lastPublishedAtMillis;
 unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
-
-bool couldNotParseAction;
 
 #define DISPLAY_CONTROL_PIN 0
 OLED oled(I2C_PIN_1, I2C_PIN_2);
@@ -290,12 +289,14 @@ void loop(void)
     serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
     publishInterval = DEFAULT_PUBLISH_INTERVAL;
     actionsSize = 0;
+
+    GpioState.clear();
+    GpioMode.clear();
     
     dht11Pin = -1;
     dht22Pin = -1;
     oneWirePin = 4;
 
-    couldNotParseAction = false;
     if (!PersistentStore.wifiCredentialsStored()) {
       toState(serve_locally);
       serveLocallySeconds = 60;
@@ -432,7 +433,7 @@ void loop(void)
       return; // do not move to next state yet
     }
     else {
-      if (configChanged || couldNotParseAction) {
+      if (configChanged) {
         saveConfig();
       }
       toState(read_senses);
@@ -546,35 +547,60 @@ void loop(void)
 }
 
 void doActions(JsonObject& senses) {
-  GpioState.clear();
-  for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
-  {
-    const char* key = it->key;
-    for (int i = 0; i < actionsSize; ++i) {
-      Action action = actions[i];
-      Logger.print("Configured action ");
-      action.printTo(Logger);
-      if (!strcmp(action.getSense(), key)) {
-        int value = parseValue(it->value); 
-        bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
-        Logger.printf("Found sense for the action with value [%d]\n", value);
-        if (value <= action.getThreshold() - action.getDelta()) {
-          Logger.println("Value is below threshold. GPIO should be ");
-          Logger.println(aboveThresholdGpioState == LOW ? "high" : "low");
-          ensureGpio(action.getGpio(), !aboveThresholdGpioState);
-        }
-        else if (value >= action.getThreshold() + action.getDelta()) {
-          Logger.println("Value is above threshold. GPIO should be ");
-          Logger.println(aboveThresholdGpioState == LOW ? "low" : "high");
-          ensureGpio(action.getGpio(), aboveThresholdGpioState);
+    int i = 0;
+    bool autoAction[actionsSize];
+
+    for (i = 0; i < actionsSize; ++i) {
+        Action action = actions[i];
+        Logger.print("Configured action ");
+        action.printTo(Logger);
+        if (GpioMode.isAuto(action.getGpio())) {
+            autoAction[i] = true;
+            Logger.print(" is enabled. ");
         }
         else {
-          Logger.println("Preserving GPIO state");
-          GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
+            autoAction[i] = false;
+            Logger.print(" is disabled as pin mode is not auto.");
         }
-      }
     }
-  }
+
+    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
+    {
+        const char* key = it->key;
+        for (i = 0; i < actionsSize; ++i) {
+            if (!autoAction[i]) {
+                continue;
+            }
+            Action action = actions[i];
+            if (!strcmp(action.getSense(), key)) {
+                int value = parseValue(it->value); 
+                bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
+                Logger.printf("Found sense for the action with value [%d]\n", value);
+                if (value <= action.getThreshold() - action.getDelta()) {
+                    Logger.println("Value is below threshold. GPIO should be ");
+                    Logger.println(aboveThresholdGpioState == LOW ? "high" : "low");
+                    ensureGpio(action.getGpio(), !aboveThresholdGpioState);
+                }
+                else if (value >= action.getThreshold() + action.getDelta()) {
+                    Logger.println("Value is above threshold. GPIO should be ");
+                    Logger.println(aboveThresholdGpioState == LOW ? "low" : "high");
+                    ensureGpio(action.getGpio(), aboveThresholdGpioState);
+                }
+                else {
+                    Logger.println("Preserving GPIO state");
+                    GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
+                }
+            }
+        }
+    }
+
+    int gpio;
+    for (i = 0; i < GpioMode.getSize(); ++i) {
+        gpio = GpioMode.getGpio(i);
+        if (!GpioMode.isAuto(gpio)) {
+            ensureGpio(gpio, GpioMode.getMode(i));
+        }
+    }
 }
 
 int parseValue(JsonVariant& valueObject) {
@@ -675,81 +701,87 @@ void loadConfig(char* string) {
 }
 
 void loadConfigFromJson(JsonObject& config) {
-  if (config.containsKey("version")) {
-    const char* version = config["version"];
-    if (strcmp(version, VERSION) == 0) {
-      configChanged = true; // to push the new version to the cloud, notifying of the successful update
-      Logger.println("Already the correct version. Ignoring update delta.");
+    if (config.containsKey("version")) {
+        const char* version = config["version"];
+        if (strcmp(version, VERSION) == 0) {
+            configChanged = true; // to push the new version to the cloud, notifying of the successful update
+            Logger.println("Already the correct version. Ignoring update delta.");
+        }
+        else {
+            char fileName[30];
+            strcpy(fileName, "idiot-esp-");
+            strcat(fileName, version);
+            strcat(fileName, ".bin");
+            updateFromS3(fileName);
+            ESP.restart();
+        }
     }
-    else {
-      char fileName[30];
-      strcpy(fileName, "idiot-esp-");
-      strcat(fileName, version);
-      strcat(fileName, ".bin");
-      updateFromS3(fileName);
-      ESP.restart();
+    if (config.containsKey("sleep")) {
+        configChanged = true;
+        sleepSeconds = atoi(config["sleep"]);
     }
-  }
-  if (config.containsKey("sleep")) {
-    configChanged = true;
-    sleepSeconds = atoi(config["sleep"]);
-  }
-  
-  if (config.containsKey("gpio")) {
-    loadGpioConfig(config["gpio"]);
-  }
+    if (config.containsKey("gpio")) {
+        loadGpioConfig(config["gpio"]);
+    }
+    if (config.containsKey("mode")) {
+        loadMode(config["mode"]);
+    }
+    if (config.containsKey("actions")) {
+        loadActions(config["actions"]);
+    }
+}
 
-  if (config.containsKey("actions")) {
-    loadActions(config["actions"]);
-  }
+void loadMode(JsonObject& modeJson) {
+    for (JsonObject::iterator it=modeJson.begin(); it!=modeJson.end(); ++it) {
+        char pinBuffer[3];
+        const char* key = it->key;
+        int pinNumber = atoi(key);
+        GpioMode.set(pinNumber, it->value.asString());
+        configChanged = true;
+    }
 }
 
 void loadActions(JsonObject& actionsJson) {
   for (JsonObject::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
   {
     const char* key = it->key;
-    if (Action::looksLikeAction(key)) {
-      configChanged = true;
-      Action action;
-      bool success = Action::fromConfig(key, it->value, &action);
-      if (!success) {
+    configChanged = true;
+    Action action;
+    bool success = Action::fromConfig(key, it->value, &action);
+    if (!success) {
         Logger.print("Could not parse action: ");
         action.printTo(Logger);
-        couldNotParseAction = true;
         continue;
-      }
-      Logger.print("Found configured action: ");
-      action.printTo(Logger);
+    }
+    Logger.print("Found configured action: ");
+    action.printTo(Logger);
 
-      bool foundSameSenseGpio = false;
-      for (int i = 0; i < actionsSize; ++i) {
+    bool foundSameSenseGpio = false;
+    for (int i = 0; i < actionsSize; ++i) {
         if (strcmp(actions[i].getSense(), action.getSense()) == 0
-            && actions[i].getGpio() == action.getGpio()) {
-              Logger.print("Replacing: ");
-              actions[i].printTo(Logger);
-              foundSameSenseGpio = true;
-              if (action.getDelta() == -2) {
+                && actions[i].getGpio() == action.getGpio()) {
+            foundSameSenseGpio = true;
+            if (action.getDelta() == -2) {
                 Logger.println("Removing action because delta is -2");
+                actions[i].printTo(Logger);
                 removeAction(i);
-              }
-              else {
-                actions[i] = action;
-              }
-              break;
             }
-      }
-      if (!foundSameSenseGpio) {
-        if (action.getDelta() == -2) {
-          Logger.println("Removing action because delta is -2");
+            else {
+                Logger.print("Replacing: ");
+                actions[i].printTo(Logger);
+                actions[i] = action;
+            }
+            break;
         }
-        else if (actionsSize + 1 >= MAX_ACTIONS_SIZE) {
-          Logger.println("Too many actions already, ignoring this one/");
+    }
+    if (!foundSameSenseGpio) {
+        if (actionsSize + 1 >= MAX_ACTIONS_SIZE) {
+            Logger.println("Too many actions already, ignoring this one/");
         }
         else {
-          actions[actionsSize] = action;
-          actionsSize++;
+            actions[actionsSize] = action;
+            actionsSize++;
         }
-      }
     }
   }
 }
@@ -766,19 +798,10 @@ void loadGpioConfig(JsonObject& gpio) {
   {
     char pinBuffer[3];
     const char* key = it->key;
-    if (looksLikePinNumber(key)) {
-      int pinNumber = atoi(key);
-      if (pinNumber == 0) {
-        continue;
-      }
-      configChanged = true;
-      makeDevicePinPairing(pinNumber, it->value.asString());
-    }
+    int pinNumber = atoi(key);
+    makeDevicePinPairing(pinNumber, it->value.asString());
+    configChanged = true;
   }
-}
-
-bool looksLikePinNumber(const char* string) {
-  return strlen(string) < 3;
 }
 
 // make sure this is synced with injectConfig
@@ -811,6 +834,9 @@ void injectConfig(JsonObject& config) {
 
   JsonObject& actions = config.createNestedObject("actions");
   injectActions(actions);
+
+  JsonObject& mode = config.createNestedObject("mode");
+  injectGpioMode(mode);
 }
 
 void saveConfig() {
@@ -849,7 +875,7 @@ void buildStateString(char* stateJson) {
   reported["state"] = STATE_STRING[state];
   reported["lawake"] = PersistentStore.readLastAwake();
   
-  JsonObject& gpio = reported.createNestedObject("mode");
+  JsonObject& gpio = reported.createNestedObject("write");
   injectGpioState(gpio);
   
   JsonObject& config = reported.createNestedObject("config");
@@ -875,5 +901,18 @@ void injectGpioState(JsonObject& gpio) {
   for (int i = 0; i < GpioState.getSize(); ++i) {
     gpio[String(GpioState.getGpio(i))] = GpioState.getState(i);
   }
+}
+
+void injectGpioMode(JsonObject& mode) { 
+    int gpio;
+    for (int i = 0; i < GpioMode.getSize(); ++i) {
+        gpio = GpioMode.getGpio(i);
+        if (GpioMode.isAuto(gpio)) {
+            mode[String(gpio)] = "a";
+        }
+        else {
+            mode[String(gpio)] = GpioMode.getMode(i);
+        }
+    }
 }
 

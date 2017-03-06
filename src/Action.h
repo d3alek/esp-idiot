@@ -9,7 +9,6 @@ class Action {
   public:
     Action();
     Action(const char*);
-    static bool looksLikeAction(const char*);
     static void buildThresholdDeltaString(char*, int, int);
     static bool fromConfig(const char*, const char*, Action*);
     void parseThresholdDeltaString(const char*);

@@ -111,6 +111,7 @@ void Action::parseSenseAndGpio(const char* senseAndGpioString) {
         _aboveThresholdGpioState = 1;
     }
     else {
+        // if L or H not specified, assume H
         _aboveThresholdGpioState = 1;
     }
 }
@@ -123,10 +124,6 @@ void Action::buildSenseAndGpioString(char* senseAndGpioString) {
     sprintf(buf, "%d", _gpio);
     strcat(senseAndGpioString, buf);
     strcat(senseAndGpioString, _aboveThresholdGpioState ? "H":"L");
-}
-
-bool Action::looksLikeAction(const char* string) {
-  return string[0] == 'A' && string[1] == '|';
 }
 
 void Action::printTo(IdiotLogger logger) {
