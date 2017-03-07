@@ -1,4 +1,4 @@
-#define VERSION "z05"
+#define VERSION "z06"
 
 #include <Arduino.h>
 
@@ -138,10 +138,14 @@ void toState(state_enum newState) {
   state = newState;
 }
 
+// A manual reset is needed after a Serial flash, otherwise this throws the ESP into oblivion
+// See https://github.com/esp8266/Arduino/issues/1722
 void updateFromS3(char* updatePath) {
   toState(ota_update);
+  display.refresh(state);
+
   char updateUrl[100];
-  strcpy(updateUrl, "http://idiot-esp.s3-website-eu-west-1.amazonaws.com/updates/");
+  strcpy(updateUrl, "http://zelenik.otselo.eu/firmware/");
   strcat(updateUrl, updatePath);
   Logger.print("Starting OTA update: ");
   Logger.println(updateUrl);
@@ -708,8 +712,8 @@ void loadConfigFromJson(JsonObject& config) {
             Logger.println("Already the correct version. Ignoring update delta.");
         }
         else {
-            char fileName[30];
-            strcpy(fileName, "idiot-esp-");
+            char fileName[20];
+            strcpy(fileName, "");
             strcat(fileName, version);
             strcat(fileName, ".bin");
             updateFromS3(fileName);
@@ -819,6 +823,7 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
 
 // make sure this is synced with makeDevicePinPairing
 void injectConfig(JsonObject& config) {
+  config["version"] = VERSION;
   config["sleep"] = sleepSeconds;
   
   JsonObject& gpio = config.createNestedObject("gpio");
@@ -870,7 +875,6 @@ void buildStateString(char* stateJson) {
   JsonObject& stateObject = root.createNestedObject("state");
   JsonObject& reported = stateObject.createNestedObject("reported");
 
-  reported["version"] = VERSION;
   reported["wifi"] = WiFi.SSID();
   reported["state"] = STATE_STRING[state];
   reported["lawake"] = PersistentStore.readLastAwake();

@@ -20,14 +20,18 @@ void DisplayController::displayDetailed(int displayable_index) {
     }
 }
 
-
 void DisplayController::refresh(state_enum state) {
+
     if (state == serve_locally) {
         return;
     }
     oled.clear();
     oled.print("Zelenik");
 
+    if (state == ota_update) {
+        oled.print("Updating...", 3, 1);
+        return;
+    }
     if (mode == 0) {
         if (displayables_size > 0 ) {
             if (millis() - last_refresh_millis > UPDATE_DISPLAY_SECONDS*1000) {
