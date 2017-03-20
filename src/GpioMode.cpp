@@ -7,6 +7,12 @@ void IdiotGpioMode::clear() {
 }
 
 void IdiotGpioMode::set(int gpio, const char* modeString) {
+    if (gpio != PIN_A && gpio != PIN_B && gpio != PIN_C) {
+        Serial.print("Cannot set pin ");
+        Serial.print(gpio);
+        Serial.print(" because it is netiher A, B or C. Ignoring call.");
+        return;
+    }
     bool isAuto;
     int mode;
 
@@ -32,6 +38,11 @@ void IdiotGpioMode::set(int gpio, const char* modeString) {
 
     if (_size == MAX_GPIO_MODES) {
         Serial.println("Max GPIO modes recorded. Ignoring call to set");
+        return;
+    }
+
+    // GPIO set to auto which is also the default, so don't waste space by marking it
+    if (mode == AUTO) {
         return;
     }
 

@@ -1,4 +1,4 @@
-#define VERSION "z06"
+#define VERSION "z07"
 
 #include <Arduino.h>
 
@@ -23,6 +23,8 @@
 
 #include <OneWire.h>
 #include "OneWireSensors.h"
+
+#define DEFAULT_ONE_WIRE_PIN 2
 
 #include <Wire.h>
 #include "I2C.h"
@@ -299,7 +301,7 @@ void loop(void)
     
     dht11Pin = -1;
     dht22Pin = -1;
-    oneWirePin = 4;
+    oneWirePin = DEFAULT_ONE_WIRE_PIN;
 
     if (!PersistentStore.wifiCredentialsStored()) {
       toState(serve_locally);
@@ -780,7 +782,10 @@ void loadActions(JsonObject& actionsJson) {
     }
     if (!foundSameSenseGpio) {
         if (actionsSize + 1 >= MAX_ACTIONS_SIZE) {
-            Logger.println("Too many actions already, ignoring this one/");
+            Logger.println("Too many actions already, ignoring this one");
+        }
+        if (action.getDelta() == -2) {
+            Logger.println("Action is marked for removal. Ignoring.");
         }
         else {
             actions[actionsSize] = action;
@@ -823,7 +828,6 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
 
 // make sure this is synced with makeDevicePinPairing
 void injectConfig(JsonObject& config) {
-  config["version"] = VERSION;
   config["sleep"] = sleepSeconds;
   
   JsonObject& gpio = config.createNestedObject("gpio");
@@ -878,6 +882,7 @@ void buildStateString(char* stateJson) {
   reported["wifi"] = WiFi.SSID();
   reported["state"] = STATE_STRING[state];
   reported["lawake"] = PersistentStore.readLastAwake();
+  reported["version"] = VERSION;
   
   JsonObject& gpio = reported.createNestedObject("write");
   injectGpioState(gpio);

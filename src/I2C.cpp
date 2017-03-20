@@ -15,19 +15,12 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
   
     if (device == 32) { // Address of the capacitive soil moisture sensor
         I2CSoilMoistureSensor sensor; 
-        sensor.begin();
-        delay(3000);
+        sensor.begin(true);
         Logger.print("I2C Soil Moisture Sensor Software Firmware Version: ");
         Logger.println(sensor.getVersion(), HEX);
         Logger.print("Soil Moisture Capacitance: ");
         int capacitance = sensor.getCapacitance();
-        Logger.print(capacitance);
-        Logger.print(", Temperature: ");
-        int temperature = sensor.getTemperature(); // divide by 10 to get real value. Not doing it here because arduino cannot sprintf floats.
-        Logger.print(temperature);
-        char valueString[20] = "";
-        sprintf(valueString, "%d-%d", capacitance, temperature);
-        jsonObject[String(key)] = String(valueString);
+        jsonObject[String(key)] = capacitance;
     }
     else {
         Wire.requestFrom(device, 1);
