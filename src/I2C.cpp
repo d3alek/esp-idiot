@@ -15,12 +15,17 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
   
     if (device == 32) { // Address of the capacitive soil moisture sensor
         I2CSoilMoistureSensor sensor; 
-        sensor.begin(true);
+        sensor.begin(true); // true means wait 1 second
         Logger.print("I2C Soil Moisture Sensor Software Firmware Version: ");
         Logger.println(sensor.getVersion(), HEX);
         Logger.print("Soil Moisture Capacitance: ");
         int capacitance = sensor.getCapacitance();
-        jsonObject[String(key)] = capacitance;
+        Logger.println(capacitance);
+        Logger.print("Soil Moisture Temperature: ");
+        float temperature = sensor.getTemperature() / (float) 10;
+        Logger.println(temperature);
+        jsonObject[String(key)+"c"] = capacitance;
+        jsonObject[String(key)+"t"] = temperature;
     }
     else {
         Wire.requestFrom(device, 1);
@@ -29,12 +34,6 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
             value = Wire.read();
             read_size++;
         }
-    
-        Logger.print(read_size);
-        Logger.println(" bytes read");
-        Logger.print(key);
-        Logger.print(" reads ");
-        Logger.println(value);
         jsonObject[String(key)] = (int)((value*100)/255);
     }    
   }

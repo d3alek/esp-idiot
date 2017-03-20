@@ -1,4 +1,4 @@
-#define VERSION "z07"
+#define VERSION "z08"
 
 #include <Arduino.h>
 
@@ -480,6 +480,7 @@ void loop(void)
     }
 
     IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
+    validate(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
@@ -552,6 +553,34 @@ void loop(void)
   }
 }
 
+void validate(JsonObject& senses) {
+    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
+        const char* key = it->key;
+        int value = parseValue(it->value); 
+        bool wrong = false;
+        
+        if (!strcmp(key, "I2C-32c")) {
+            
+            if (value < 200 || value > 1000) {
+                wrong = true;
+            }
+        }
+        if (!strcmp(key, "I2C-32t")) {
+            if (value < -50 || value > 100) {
+                wrong = true;
+            }
+        }
+        if (!strcmp(key, "I2C-8") || !strcmp(key, "I2C-9") || !strcmp(key, "I2C-10")) {
+            if (value < 0 || value > 100) {
+                wrong = true;
+            }
+        }
+        if (wrong) {
+            senses[key] = String("w") + value;
+        }
+    }
+}
+
 void doActions(JsonObject& senses) {
     int i = 0;
     bool autoAction[actionsSize];
@@ -573,12 +602,18 @@ void doActions(JsonObject& senses) {
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
     {
         const char* key = it->key;
+        if (is_wrong(it->value)) {
+            Logger.printf("Ignoring sense [%s] because value is marked as wrong\n", key);
+            continue;
+        }
+
         for (i = 0; i < actionsSize; ++i) {
             if (!autoAction[i]) {
                 continue;
             }
             Action action = actions[i];
             if (!strcmp(action.getSense(), key)) {
+                   
                 int value = parseValue(it->value); 
                 bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
                 Logger.printf("Found sense for the action with value [%d]\n", value);
@@ -609,9 +644,26 @@ void doActions(JsonObject& senses) {
     }
 }
 
+bool is_wrong(JsonVariant& valueObject) {
+    if (valueObject.is<const char*>()) {
+        const char* valueString = valueObject;
+        if (valueString == NULL) {
+            return true;
+        }
+        if (strlen(valueString) > 0) {
+            return valueString[0] == 'w';
+        }
+    }
+
+    return false;
+}
+
 int parseValue(JsonVariant& valueObject) {
-    int value = -2;
-    if (valueObject.is<int>()) {
+    int value = 0;
+    if (is_wrong(valueObject)) {
+        return -2; 
+    }
+    else if (valueObject.is<int>()) {
         value = valueObject;
     }
     else if (valueObject.is<const char*>()) {
@@ -619,6 +671,7 @@ int parseValue(JsonVariant& valueObject) {
         Logger.printf("Value String [%s]\n", valueString);
         if (valueString == NULL) {
             Logger.println("Could not parse value integer as value is null");
+            return -2;
         }
         else {
             value = atoi(valueObject);
