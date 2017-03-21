@@ -1,4 +1,4 @@
-#define VERSION "z08"
+#define VERSION "z09"
 
 #include <Arduino.h>
 
@@ -52,9 +52,6 @@
 #define I2C_PIN_1 12 // SDA
 #define I2C_PIN_2 14 // SDC
 
-ADC_MODE(ADC_VCC);
-
-#define DEFAULT_SLEEP_SECONDS 60*15
 #define HARD_RESET_PIN 0
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
 
@@ -78,10 +75,6 @@ const char uuidPrefix[] = "ESP";
 
 WiFiClient wclient;
 PubSubClient mqttClient(wclient);
-
-int voltage = NAN;
-
-int sleepSeconds = DEFAULT_SLEEP_SECONDS;
 
 char uuid[15];
 char updateTopic[20];
@@ -204,7 +197,6 @@ bool mqttConnect() {
     strcpy(updateResultTopic, updateTopic);
     strcat(updateResultTopic,"/result");
     
-    sleepSeconds = DEFAULT_SLEEP_SECONDS;
     mqttClient.subscribe(updateTopic);
     Logger.println(updateTopic);
     mqttClient.subscribe(deltaTopic);
@@ -324,7 +316,7 @@ void loop(void)
       Logger.println(" seconds");
     }
     else if (millis() - serveLocallyStartMs > serveLocallySeconds * 1000) {
-      toState(deep_sleep);
+      toState(cool_off);
     }
     else {
       delay(10);
@@ -480,6 +472,9 @@ void loop(void)
     }
 
     IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
+
+    senses["A0"] = int(((1024 - analogRead(A0))*100) / 1024);
+
     validate(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
@@ -488,8 +483,6 @@ void loop(void)
     doActions(senses);
     display.update(senses);
 
-    readInternalVoltage();
-    
     digitalWrite(I2C_POWER, 0);
 
     toState(local_publish);
@@ -497,7 +490,7 @@ void loop(void)
   else if (state == local_publish) {
     if (!configChanged && !gpioStateChanged && lastPublishedAtMillis != 0 && millis() - lastPublishedAtMillis < publishInterval*1000) {
       Logger.println("Skip publishing as published recently.");
-      toState(deep_sleep);
+      toState(cool_off);
     }
     else {
       buildStateString(finalState);
@@ -516,7 +509,7 @@ void loop(void)
         toState(publish);
       }
       else {
-        toState(deep_sleep);
+        toState(cool_off);
       }
     }
   }
@@ -534,22 +527,15 @@ void loop(void)
     }
     lastPublishedAtMillis = millis();
     
-    toState(deep_sleep);
+    toState(cool_off);
   }
-  else if (state == deep_sleep) {
+  else if (state == cool_off) {
     PersistentStore.putLastAwake(millis());
     Logger.println(millis());
 
-    if (sleepSeconds == 0) {
-      WiFi.disconnect();
-      toState(boot);
-      delay(1000);
-      return;
-    }
-    
-    Logger.flush();
-    Logger.close();
-    EspControl.deepSleep(sleepSeconds);
+    WiFi.disconnect();
+    toState(boot);
+    delay(1000);
   }
 }
 
@@ -706,12 +692,6 @@ void requestState() {
   }
 }
 
-void readInternalVoltage() {
-  voltage = ESP.getVcc();
-  Logger.print("Voltage: ");
-  Logger.println(voltage);
-}
-
 bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObject) {
   Logger.print("DHT ");
   
@@ -774,10 +754,6 @@ void loadConfigFromJson(JsonObject& config) {
             updateFromS3(fileName);
             ESP.restart();
         }
-    }
-    if (config.containsKey("sleep")) {
-        configChanged = true;
-        sleepSeconds = atoi(config["sleep"]);
     }
     if (config.containsKey("gpio")) {
         loadGpioConfig(config["gpio"]);
@@ -881,8 +857,6 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
 
 // make sure this is synced with makeDevicePinPairing
 void injectConfig(JsonObject& config) {
-  config["sleep"] = sleepSeconds;
-  
   JsonObject& gpio = config.createNestedObject("gpio");
   if (dht11Pin != -1) {
     gpio.set(String(dht11Pin), "DHT11"); // this string conversion is necessary because otherwise ArduinoJson corrupts the key
@@ -946,9 +920,7 @@ void buildStateString(char* stateJson) {
   
   StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
   reported["senses"] = readSensesResultBuffer.parseObject(readSensesResult);
-  if (!isnan(voltage)) {
-    reported["voltage"] = voltage;
-  }
+  
   int actualLength = root.measureLength();
   if (actualLength >= MAX_STATE_JSON_LENGTH) {
     Logger.println("!!! Resulting JSON is too long, expect errors");
