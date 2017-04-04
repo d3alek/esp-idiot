@@ -1,4 +1,4 @@
-#define VERSION "z10"
+#define VERSION "z11"
 
 #include <Arduino.h>
 
@@ -216,6 +216,10 @@ bool mqttConnect() {
 
 void hardReset() {
   toState(hard_reset);
+
+  SPIFFS.format();
+  ESP.eraseConfig();
+
   PersistentStore.clear();
   EspControl.restart();
 }

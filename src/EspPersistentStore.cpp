@@ -15,6 +15,7 @@ void EspPersistentStore::clear() {
   }
   EEPROM.write(WIFI_NAME_STORED_BIT, 0);
   EEPROM.write(WIFI_PASSWORD_STORED_BIT, 0);
+  _putString(CONFIG_OFFSET, "{}");
   EEPROM.commit();
 }
 

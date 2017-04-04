@@ -5,7 +5,7 @@ void IdiotEspControl::deepSleep(int seconds) {
 }
 
 void IdiotEspControl::restart() {
-  deepSleep(1);
+  ESP.restart();
 }
 
 void IdiotEspControl::blink() {
