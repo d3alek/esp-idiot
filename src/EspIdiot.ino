@@ -1,4 +1,4 @@
-#define VERSION "z09"
+#define VERSION "z10"
 
 #include <Arduino.h>
 
@@ -37,7 +37,11 @@
 #include "GpioMode.h"
 
 // file which defines mqttHostname, mqttPort, mqttUser, mqttPassword
+#ifdef DEV
+#include "MQTTConfigDev.h"
+#else
 #include "MQTTConfig.h"
+#endif
 
 #include "State.h"
 #include "IdiotWifiServer.h"
@@ -107,6 +111,8 @@ float serveLocallySeconds;
 #define DISPLAY_CONTROL_PIN 0
 OLED oled(I2C_PIN_1, I2C_PIN_2);
 DisplayController display(oled);
+
+unsigned long boot_time = -1;
 
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
@@ -475,6 +481,10 @@ void loop(void)
 
     senses["A0"] = int(((1024 - analogRead(A0))*100) / 1024);
 
+    if (boot_time != -1) {
+        senses["time"] = seconds_today();
+    }
+
     validate(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
@@ -599,23 +609,37 @@ void doActions(JsonObject& senses) {
             }
             Action action = actions[i];
             if (!strcmp(action.getSense(), key)) {
-                   
+                bool time_action = !strcmp(key, "time");
                 int value = parseValue(it->value); 
                 bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
                 Logger.printf("Found sense for the action with value [%d]\n", value);
-                if (value <= action.getThreshold() - action.getDelta()) {
-                    Logger.println("Value is below threshold. GPIO should be ");
-                    Logger.println(aboveThresholdGpioState == LOW ? "high" : "low");
-                    ensureGpio(action.getGpio(), !aboveThresholdGpioState);
-                }
-                else if (value >= action.getThreshold() + action.getDelta()) {
-                    Logger.println("Value is above threshold. GPIO should be ");
-                    Logger.println(aboveThresholdGpioState == LOW ? "low" : "high");
-                    ensureGpio(action.getGpio(), aboveThresholdGpioState);
+                if (time_action) {
+                    if (value >= action.getThreshold() && value <= action.getThreshold() + action.getDelta()) {
+                        Logger.println("Time is within action period. GPIO should be ");
+                        Logger.println(aboveThresholdGpioState == LOW ? "low" : "high");
+                        ensureGpio(action.getGpio(), aboveThresholdGpioState);
+                    }
+                    else {
+                        Logger.println("Time is outside of action period. GPIO should be ");
+                        Logger.println(aboveThresholdGpioState == LOW ? "high" : "low");
+                        ensureGpio(action.getGpio(), !aboveThresholdGpioState);
+                    }
                 }
                 else {
-                    Logger.println("Preserving GPIO state");
-                    GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
+                    if (value <= action.getThreshold() - action.getDelta()) {
+                        Logger.println("Value is below threshold. GPIO should be ");
+                        Logger.println(aboveThresholdGpioState == LOW ? "high" : "low");
+                        ensureGpio(action.getGpio(), !aboveThresholdGpioState);
+                    }
+                    else if (value >= action.getThreshold() + action.getDelta()) {
+                        Logger.println("Value is above threshold. GPIO should be ");
+                        Logger.println(aboveThresholdGpioState == LOW ? "low" : "high");
+                        ensureGpio(action.getGpio(), aboveThresholdGpioState);
+                    }
+                    else {
+                        Logger.println("Preserving GPIO state");
+                        GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
+                    }
                 }
             }
         }
@@ -764,6 +788,18 @@ void loadConfigFromJson(JsonObject& config) {
     if (config.containsKey("actions")) {
         loadActions(config["actions"]);
     }
+    if (config.containsKey("t")) {
+        int unix_time = config["t"];
+        boot_time = unix_time - seconds_since_boot();
+    }
+}
+
+int seconds_since_boot() {
+    return millis() / 1000;
+}
+
+int seconds_today() {
+    return (boot_time + seconds_since_boot()) % (60*60*24);
 }
 
 void loadMode(JsonObject& modeJson) {
@@ -910,6 +946,7 @@ void buildStateString(char* stateJson) {
   reported["state"] = STATE_STRING[state];
   reported["lawake"] = PersistentStore.readLastAwake();
   reported["version"] = VERSION;
+  reported["b"] = boot_time;
   
   JsonObject& gpio = reported.createNestedObject("write");
   injectGpioState(gpio);
