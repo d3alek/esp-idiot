@@ -27,14 +27,16 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         jsonObject[String(key)+"c"] = capacitance;
         jsonObject[String(key)+"t"] = temperature;
     }
+    else if (device == 60) {
+        Logger.println("Ignoring I2C screen from senses");
+    }
     else {
         Wire.requestFrom(device, 1);
-        int read_size = 0;
-        while (Wire.available()) {
-            value = Wire.read();
-            read_size++;
-        }
-        jsonObject[String(key)] = (int)((value*100)/255);
+        byte low_byte = Wire.read();
+        Wire.requestFrom(device, 1);
+        byte high_byte = Wire.read();
+        value = word(high_byte, low_byte);
+        jsonObject[String(key)] = int((100*value) / 1024);
     }    
   }
 }

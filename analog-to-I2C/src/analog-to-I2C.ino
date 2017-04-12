@@ -11,13 +11,23 @@
 
 long last_status_light_update = 0;
 
-int samples[MAX_SAMPLES];
-volatile int average = 42; // distinguishable number
+int sample = 42; // distinguishable number
 
 // calling functions from here does not seem to work, so using only global variables
+
+volatile uint8_t to_send[2] {
+    0x0, // low byte
+    0x0 // high byte
+};
+volatile byte sending = 0;
+
 void answer_request()
 {  
-  TinyWireS.send(average);
+  TinyWireS.send(to_send[sending]);
+  sending++;
+  if (sending > 1) {
+    sending = 0;
+  }
 }
 
 void setup() {
@@ -46,18 +56,10 @@ void update_status_light() {
   }
 }
 
-int active_sample;
-int samples_sum;
-int i;
-
 void collect_sample() {
-  active_sample = (active_sample + 1) % MAX_SAMPLES;
-  samples[active_sample] = analogRead(ANALOG_PIN);
-
-  samples_sum = 0;
-  for (i = 0; i < MAX_SAMPLES; ++i) {
-    samples_sum += samples[i];
-  }
-
-  average = samples_sum / MAX_SAMPLES;
+  sample = analogRead(ANALOG_PIN);
+  noInterrupts();
+  to_send[0] = lowByte(sample);
+  to_send[1] = highByte(sample);
+  interrupts();
 }

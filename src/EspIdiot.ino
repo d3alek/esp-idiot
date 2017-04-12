@@ -1,4 +1,4 @@
-#define VERSION "z11"
+#define VERSION "z12"
 
 #include <Arduino.h>
 
@@ -570,11 +570,11 @@ void validate(JsonObject& senses) {
                 wrong = true;
             }
         }
-        if (!strcmp(key, "I2C-8") || !strcmp(key, "I2C-9") || !strcmp(key, "I2C-10")) {
-            if (value < 0 || value > 100) {
-                wrong = true;
-            }
-        }
+        //if (!strcmp(key, "I2C-8") || !strcmp(key, "I2C-9") || !strcmp(key, "I2C-10")) {
+        //    if (value < 0 || value > 100) {
+        //        wrong = true;
+        //    }
+        //}
         if (wrong) {
             senses[key] = String("w") + value;
         }
