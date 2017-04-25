@@ -6,7 +6,8 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
 
   scan(Logger);
 
-  int error, value;
+  int available, error, value;
+  byte low_byte, high_byte;
   for (int i = 0; i < devices_size; ++i) {
     int device = devices[i];
 
@@ -31,12 +32,29 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         Logger.println("Ignoring I2C screen from senses");
     }
     else {
+        error = false;
         Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
-        byte low_byte = Wire.read();
+        available = Wire.available();
+        if (available != 1) {
+            error = true;
+            Logger.printf("[I2C-%d low byte] Expected 1 available but got %d instead\n", device, available);
+        }
+        else {
+            low_byte = Wire.read();
+        }
+
         Wire.requestFrom(device, 1);
-        byte high_byte = Wire.read();
-        error = Wire.endTransmission();
+        if (available != 1) {
+            error = true;
+            Logger.printf("[I2C-%d high byte] Expected 1 available but got %d instead\n", device, available);
+        }
+        else {
+            high_byte = Wire.read();
+        }
+
+        error = Wire.endTransmission() || error;
+
         value = word(high_byte, low_byte);
 
         if (error) {

@@ -11,7 +11,6 @@
         STATE(update_config) \
         STATE(read_senses) \
         STATE(publish) \
-        STATE(local_publish)  \
         STATE(ota_update)    \
         STATE(cool_off)  \
         STATE(hard_reset)  \

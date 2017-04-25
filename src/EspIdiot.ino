@@ -1,4 +1,4 @@
-#define VERSION "z12.1"
+#define VERSION "z12.3"
 
 #include <Arduino.h>
 
@@ -74,8 +74,6 @@
 #define COULD_NOT_PARSE -1002
 #define WRONG_VALUE -1003
 
-unsigned long publishInterval;
-
 const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
@@ -106,7 +104,6 @@ char finalState[MAX_STATE_JSON_LENGTH];
 Action actions[MAX_ACTIONS_SIZE];
 int actionsSize;
 
-unsigned long lastPublishedAtMillis;
 unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
@@ -266,8 +263,6 @@ void setup(void)
 
   PersistentStore.begin();
   
-  lastPublishedAtMillis = 0;
-  
   WiFi.mode(WIFI_STA);
    
   pinMode(HARD_RESET_PIN, INPUT);
@@ -298,7 +293,6 @@ void loop(void)
 
     serveLocallyStartMs = 0;
     serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
-    publishInterval = DEFAULT_PUBLISH_INTERVAL;
     actionsSize = 0;
 
     GpioState.clear();
@@ -502,53 +496,33 @@ void loop(void)
 
     digitalWrite(I2C_POWER, 0);
 
-    toState(local_publish);
-  }
-  else if (state == local_publish) {
-    if (!configChanged && !gpioStateChanged && lastPublishedAtMillis != 0 && millis() - lastPublishedAtMillis < publishInterval*1000) {
-      Logger.println("Skip publishing as published recently.");
-      toState(cool_off);
-    }
-    else {
-      buildStateString(finalState);
-      yield();
-      SizeLimitedFileAppender localPublishFile;
-      if (!localPublishFile.open(LOCAL_PUBLISH_FILE, MAX_LOCAL_PUBLISH_FILE_BYTES)) {
-        Logger.println("Could not open local publish file. Skipping local_publish.");
-      }
-      else {
-        localPublishFile.println(finalState);
-        yield();
-        localPublishFile.close();
-        lastPublishedAtMillis = millis();
-      }
-      if (mqttClient.state() == MQTT_CONNECTED) {
-        toState(publish);
-      }
-      else {
-        toState(cool_off);
-      }
-    }
+    toState(publish);
   }
   else if (state == publish) {
-    char topic[30];
-    constructTopicName(topic, "things/");
-    strcat(topic, "/update");
-    
+    buildStateString(finalState);
+    yield();
     Logger.println(finalState);
-    Logger.print("Publishing to ");
-    Logger.println(topic);
-    bool success = mqttClient.publish(topic, finalState);
-    if (!success) {
-        Logger.println("Failed to publish.");    
+    if (mqttClient.state() == MQTT_CONNECTED) {
+        char topic[30];
+        constructTopicName(topic, "things/");
+        strcat(topic, "/update");
+        
+        Logger.print("Publishing to ");
+        Logger.println(topic);
+        bool success = mqttClient.publish(topic, finalState);
+        if (!success) {
+            Logger.println("Failed to publish.");    
+        }
+        
+        toState(cool_off);
     }
-    lastPublishedAtMillis = millis();
-    
-    toState(cool_off);
+    else {
+        Logger.println("MQTT not connected so skip publishing.");
+        toState(cool_off);
+    }
   }
   else if (state == cool_off) {
     PersistentStore.putLastAwake(millis());
-    Logger.println(millis());
 
     WiFi.disconnect();
     toState(boot);
