@@ -955,7 +955,6 @@ void buildStateString(char* stateJson) {
   }
 
   root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
-  Logger.println(stateJson);
   return;
 }
 

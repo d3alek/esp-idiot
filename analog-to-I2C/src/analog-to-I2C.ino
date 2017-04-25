@@ -15,19 +15,30 @@ int sample = 42; // distinguishable number
 
 // calling functions from here does not seem to work, so using only global variables
 
-volatile uint8_t to_send[2] {
+volatile uint8_t to_send[4] {
+    0x0,
+    0x1, // version
     0x0, // low byte
     0x0 // high byte
 };
-volatile byte sending = 0;
+volatile uint8_t reg_position = 0;
 
 void answer_request()
 {  
-  TinyWireS.send(to_send[sending]);
-  sending++;
-  if (sending > 1) {
-    sending = 0;
-  }
+    if (reg_position < 1 || reg_position > 3) {
+        TinyWireS.send(0);
+    }
+    else { 
+        TinyWireS.send(to_send[reg_position]);
+    }
+}
+
+void receive_event(uint8_t count) {
+    if (count != 1) {
+        return;
+    }
+
+    reg_position = TinyWireS.receive();
 }
 
 void setup() {
@@ -36,6 +47,7 @@ void setup() {
 
   TinyWireS.begin(I2C_SLAVE_ADDR);
   TinyWireS.onRequest(answer_request);
+  TinyWireS.onReceive(receive_event);
 
   last_status_light_update = millis();
 
@@ -59,7 +71,7 @@ void update_status_light() {
 void collect_sample() {
   sample = analogRead(ANALOG_PIN);
   noInterrupts();
-  to_send[0] = lowByte(sample);
-  to_send[1] = highByte(sample);
+  to_send[2] = lowByte(sample);
+  to_send[3] = highByte(sample);
   interrupts();
 }
