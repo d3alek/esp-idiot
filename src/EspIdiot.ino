@@ -1,4 +1,4 @@
-#define VERSION "z12"
+#define VERSION "z12.1"
 
 #include <Arduino.h>
 
@@ -70,6 +70,9 @@
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
+
+#define COULD_NOT_PARSE -1002
+#define WRONG_VALUE -1003
 
 unsigned long publishInterval;
 
@@ -559,22 +562,28 @@ void validate(JsonObject& senses) {
         int value = parseValue(it->value); 
         bool wrong = false;
         
-        if (!strcmp(key, "I2C-32c")) {
+        if (value == WRONG_VALUE) {
+            continue;
+        } 
+        else if (value == COULD_NOT_PARSE) {
+            wrong = true;
+        }
+        else if (!strcmp(key, "I2C-32c")) {
             
             if (value < 200 || value > 1000) {
                 wrong = true;
             }
         }
-        if (!strcmp(key, "I2C-32t")) {
+        else if (!strcmp(key, "I2C-32t")) {
             if (value < -50 || value > 100) {
                 wrong = true;
             }
         }
-        //if (!strcmp(key, "I2C-8") || !strcmp(key, "I2C-9") || !strcmp(key, "I2C-10")) {
-        //    if (value < 0 || value > 100) {
-        //        wrong = true;
-        //    }
-        //}
+        if (!strcmp(key, "I2C-8") || !strcmp(key, "I2C-9") || !strcmp(key, "I2C-10")) {
+            if (value < 0 || value > 100) {
+                wrong = true;
+            }
+        }
         if (wrong) {
             senses[key] = String("w") + value;
         }
@@ -615,6 +624,10 @@ void doActions(JsonObject& senses) {
             if (!strcmp(action.getSense(), key)) {
                 bool time_action = !strcmp(key, "time");
                 int value = parseValue(it->value); 
+                if (value == WRONG_VALUE || value == COULD_NOT_PARSE) {
+                    Logger.printf("Could parse or wrong value [%d]\n", value);
+                    continue;
+                }
                 bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
                 Logger.printf("Found sense for the action with value [%d]\n", value);
                 if (time_action) {
@@ -675,7 +688,7 @@ bool is_wrong(JsonVariant& valueObject) {
 int parseValue(JsonVariant& valueObject) {
     int value = 0;
     if (is_wrong(valueObject)) {
-        return -2; 
+        return WRONG_VALUE; 
     }
     else if (valueObject.is<int>()) {
         value = valueObject;
@@ -685,7 +698,7 @@ int parseValue(JsonVariant& valueObject) {
         Logger.printf("Value String [%s]\n", valueString);
         if (valueString == NULL) {
             Logger.println("Could not parse value integer as value is null");
-            return -2;
+            return COULD_NOT_PARSE;
         }
         else {
             value = atoi(valueObject);

@@ -6,7 +6,7 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
 
   scan(Logger);
 
-  int value;
+  int error, value;
   for (int i = 0; i < devices_size; ++i) {
     int device = devices[i];
 
@@ -31,12 +31,21 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         Logger.println("Ignoring I2C screen from senses");
     }
     else {
+        Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
         byte low_byte = Wire.read();
         Wire.requestFrom(device, 1);
         byte high_byte = Wire.read();
+        error = Wire.endTransmission();
         value = word(high_byte, low_byte);
-        jsonObject[String(key)] = int((100*value) / 1024);
+
+        if (error) {
+            Logger.printf("Marking I2C read value as wrong because endTransmission returned error %d\n", error);
+            jsonObject[String(key)] = String("w") + int((100*value) / 1024);
+        }
+        else {
+            jsonObject[String(key)] = int((100*value) / 1024);
+        }
     }    
   }
 }
