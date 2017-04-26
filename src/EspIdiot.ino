@@ -1,4 +1,4 @@
-#define VERSION "z12.5"
+#define VERSION "z12.6"
 
 #include <Arduino.h>
 

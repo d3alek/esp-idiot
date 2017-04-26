@@ -3,6 +3,7 @@
 void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
   Wire.pins(i2cPin1, i2cPin2);
   Wire.begin();
+  Wire.setClockStretchLimit(1500); // in µs
 
   scan(Logger);
 
