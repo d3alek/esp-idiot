@@ -129,13 +129,4 @@ long EEPROMReadlong(long address)
   return ((four << 0) & 0xFF) + ((three << 8) & 0xFFFF) + ((two << 16) & 0xFFFFFF) + ((one << 24) & 0xFFFFFFFF);
 }
 
-void EspPersistentStore::putLastAwake(unsigned long millis) {
-  EEPROMWritelong(LAST_AWAKE_OFFSET, millis);
-  EEPROM.commit();
-}
-
-unsigned long EspPersistentStore::readLastAwake() {
-  return EEPROMReadlong(LAST_AWAKE_OFFSET);
-}
-
 EspPersistentStore PersistentStore;

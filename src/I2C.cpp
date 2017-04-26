@@ -33,10 +33,13 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
     }
     else if (device == 8) {
         error = false;
+        version_byte = low_byte = high_byte = 0;
 
         Wire.beginTransmission(device);
         Wire.write(0x1);
         Wire.endTransmission(false);
+
+        delay(85);
 
         Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
@@ -49,9 +52,15 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
             version_byte = Wire.read();
         }
 
+        error = Wire.endTransmission(false) || error;
+
+        delay(85);
+
         Wire.beginTransmission(device);
         Wire.write(0x2);
         Wire.endTransmission(false);
+
+        delay(85);
 
         Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
@@ -64,9 +73,15 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
             low_byte = Wire.read();
         }
 
+        error = Wire.endTransmission(false) || error;
+        
+        delay(85);
+
         Wire.beginTransmission(device);
         Wire.write(0x3);
         Wire.endTransmission(false);
+
+        delay(85);
 
         Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
@@ -79,6 +94,8 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         }
 
         error = Wire.endTransmission() || error;
+
+        delay(85);
 
         value = word(high_byte, low_byte);
 
@@ -97,6 +114,7 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
     }
     else {
         error = false;
+        version_byte = low_byte = high_byte = 0;
         Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
         available = Wire.available();

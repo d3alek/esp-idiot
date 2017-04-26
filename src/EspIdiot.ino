@@ -1,4 +1,4 @@
-#define VERSION "z12.3"
+#define VERSION "z12.5"
 
 #include <Arduino.h>
 
@@ -52,7 +52,7 @@
 #include "Displayable.h"
 #include "DisplayController.h"
 
-#define I2C_POWER 16 
+#define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
 #define I2C_PIN_1 12 // SDA
 #define I2C_PIN_2 14 // SDC
 
@@ -264,6 +264,11 @@ void setup(void)
   PersistentStore.begin();
   
   WiFi.mode(WIFI_STA);
+
+  ensureGpio(PIN_A, 0);
+  ensureGpio(PIN_B, 0);
+  ensureGpio(PIN_C, 0);
+  ensureGpio(I2C_POWER, 0);
    
   pinMode(HARD_RESET_PIN, INPUT);
   delay(1000);
@@ -401,9 +406,6 @@ void loop(void)
       Logger.println("[HTTP] Successful internet connectivity test.");
       toState(connect_to_mqtt);
     }
-
-
-
   }
   else if (state == connect_to_mqtt) {
     while (mqttConnectAttempts++ < MAX_MQTT_CONNECT_ATTEMPTS && !mqttConnect()) { 
@@ -522,8 +524,6 @@ void loop(void)
     }
   }
   else if (state == cool_off) {
-    PersistentStore.putLastAwake(millis());
-
     WiFi.disconnect();
     toState(boot);
     delay(1000);
@@ -935,7 +935,6 @@ void buildStateString(char* stateJson) {
 
   reported["wifi"] = WiFi.SSID();
   reported["state"] = STATE_STRING[state];
-  reported["lawake"] = PersistentStore.readLastAwake();
   reported["version"] = VERSION;
   reported["b"] = boot_time;
   
