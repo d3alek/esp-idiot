@@ -7,7 +7,7 @@ void IdiotGpioMode::clear() {
 }
 
 void IdiotGpioMode::set(int gpio, const char* modeString) {
-    if (gpio != PIN_A && gpio != PIN_B && gpio != PIN_C) {
+    if (gpio != PIN_A && gpio != PIN_B && gpio != PIN_C && gpio != PIN_D && gpio != PIN_E && gpio != PIN_F) {
         Serial.print("Cannot set pin ");
         Serial.print(gpio);
         Serial.print(" because it is netiher A, B or C. Ignoring call.");

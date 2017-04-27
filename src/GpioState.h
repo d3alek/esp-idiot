@@ -1,7 +1,7 @@
 #ifndef GPIO_STATE_H
 #define GPIO_STATE_H
 
-#define MAX_GPIO_STATES 5
+#define MAX_GPIO_STATES 6
 
 class IdiotGpioState {
   public:

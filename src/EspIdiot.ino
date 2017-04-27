@@ -1,4 +1,4 @@
-#define VERSION "z12.6"
+#define VERSION "l1"
 
 #include <Arduino.h>
 
@@ -26,9 +26,6 @@
 
 #define DEFAULT_ONE_WIRE_PIN 2
 
-#include <Wire.h>
-#include "I2C.h"
-
 #include "Action.h"
 
 #include "EspControl.h"
@@ -46,20 +43,10 @@
 #include "State.h"
 #include "IdiotWifiServer.h"
 
-#include "I2CSoilMoistureSensor.h"
-
-#include "OLED.h"
-#include "Displayable.h"
-#include "DisplayController.h"
-
-#define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
-#define I2C_PIN_1 12 // SDA
-#define I2C_PIN_2 14 // SDC
-
 #define HARD_RESET_PIN 0
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
 
-#define MAX_STATE_JSON_LENGTH 512
+#define MAX_STATE_JSON_LENGTH 640
 
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
@@ -108,10 +95,6 @@ unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
 
-#define DISPLAY_CONTROL_PIN 0
-OLED oled(I2C_PIN_1, I2C_PIN_2);
-DisplayController display(oled);
-
 unsigned long boot_time = -1;
 
 // source: https://github.com/esp8266/Arduino/issues/1532
@@ -143,10 +126,9 @@ void toState(state_enum newState) {
 // See https://github.com/esp8266/Arduino/issues/1722
 void updateFromS3(char* updatePath) {
   toState(ota_update);
-  display.refresh(state);
 
   char updateUrl[100];
-  strcpy(updateUrl, "http://zelenik.otselo.eu/firmware/");
+  strcpy(updateUrl, UPDATE_URL);
   strcat(updateUrl, updatePath);
   Logger.print("Starting OTA update: ");
   Logger.println(updateUrl);
@@ -224,12 +206,6 @@ void hardReset() {
   EspControl.restart();
 }
 
-void updateDisplayMode() {
-    if (!digitalRead(DISPLAY_CONTROL_PIN)) {
-        display.changeMode();
-    }
-}
-
 void setup(void)
 {
   last_loop = millis();
@@ -268,7 +244,9 @@ void setup(void)
   ensureGpio(PIN_A, 0);
   ensureGpio(PIN_B, 0);
   ensureGpio(PIN_C, 0);
-  ensureGpio(I2C_POWER, 0);
+  ensureGpio(PIN_D, 0);
+  ensureGpio(PIN_E, 0);
+  ensureGpio(PIN_F, 0);
    
   pinMode(HARD_RESET_PIN, INPUT);
   delay(1000);
@@ -283,9 +261,6 @@ void loop(void)
   
   idiotWifiServer.handleClient();
 
-  updateDisplayMode();
-  display.refresh(state);
-  
   if (state == boot) {
 
     wifiConnectAttempts = 0;
@@ -447,10 +422,6 @@ void loop(void)
     }
   }
   else if (state == read_senses) {
-    pinMode(I2C_POWER, OUTPUT);
-    digitalWrite(I2C_POWER, 1);
-    delay(2000);
-
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
     JsonObject& senses = jsonBuffer.createObject();
 
@@ -480,8 +451,6 @@ void loop(void)
       IdiotOneWire.readOneWire(Logger, oneWirePin, senses);
     }
 
-    IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
-
     senses["A0"] = int(((1024 - analogRead(A0))*100) / 1024);
 
     if (boot_time != -1) {
@@ -494,9 +463,6 @@ void loop(void)
     Logger.printf("readSensesResult: %s\n", readSensesResult);
 
     doActions(senses);
-    display.update(senses);
-
-    digitalWrite(I2C_POWER, 0);
 
     toState(publish);
   }
@@ -793,11 +759,38 @@ int seconds_today() {
     return (boot_time + seconds_since_boot()) % (60*60*24);
 }
 
+int gpioFromString(const char* key) {
+    if (strlen(key) == 0) {
+        Logger.println("Could not get gpio from string as it is empty");
+        return -1;
+    }
+    char firstLetter = key[0];
+    if (firstLetter == 'A') {
+        return PIN_A;
+    }
+    else if (firstLetter == 'B') {
+        return PIN_B;
+    }
+    else if (firstLetter == 'C') {
+        return PIN_C;
+    }
+    else if (firstLetter == 'D') {
+        return PIN_D;
+    }
+    else if (firstLetter == 'E') {
+        return PIN_E;
+    }
+    else if (firstLetter == 'F') {
+        return PIN_F;
+    }
+    return atoi(key);
+}
+
 void loadMode(JsonObject& modeJson) {
     for (JsonObject::iterator it=modeJson.begin(); it!=modeJson.end(); ++it) {
         char pinBuffer[3];
         const char* key = it->key;
-        int pinNumber = atoi(key);
+        int pinNumber = gpioFromString(key);
         GpioMode.set(pinNumber, it->value.asString());
         configChanged = true;
     }
@@ -957,10 +950,36 @@ void buildStateString(char* stateJson) {
   return;
 }
 
+String gpioToString(int gpio) {
+    if (gpio == PIN_A) {
+        return String('A');
+    }
+    else if (gpio == PIN_B) {
+        return String('B');
+    }
+    else if (gpio == PIN_C) {
+        return String('C');
+    }
+    else if (gpio == PIN_D) {
+        return String('D');
+    }
+    else if (gpio == PIN_E) {
+        return String('E');
+    }
+    else if (gpio == PIN_F) {
+        return String('F');
+    }
+    else {
+        return String(gpio);
+    }
+}
+
 void injectGpioState(JsonObject& gpio) { 
-  for (int i = 0; i < GpioState.getSize(); ++i) {
-    gpio[String(GpioState.getGpio(i))] = GpioState.getState(i);
-  }
+    int gpioNumber;
+    for (int i = 0; i < GpioState.getSize(); ++i) {
+        gpioNumber = GpioState.getGpio(i);
+        gpio[gpioToString(gpioNumber)] = GpioState.getState(i);
+    }
 }
 
 void injectGpioMode(JsonObject& mode) { 
@@ -968,10 +987,10 @@ void injectGpioMode(JsonObject& mode) {
     for (int i = 0; i < GpioMode.getSize(); ++i) {
         gpio = GpioMode.getGpio(i);
         if (GpioMode.isAuto(gpio)) {
-            mode[String(gpio)] = "a";
+            mode[gpioToString(gpio)] = "a";
         }
         else {
-            mode[String(gpio)] = GpioMode.getMode(i);
+            mode[gpioToString(gpio)] = GpioMode.getMode(i);
         }
     }
 }

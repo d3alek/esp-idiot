@@ -1,8 +1,4 @@
-#ifndef _TEST_
 #include <Arduino.h>
-#else
-#include <mock_arduino.h>
-#endif
 
 #include "GpioState.h"
 
