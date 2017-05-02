@@ -1,4 +1,4 @@
-#define VERSION "z12.6"
+#define VERSION "z13"
 
 #include <Arduino.h>
 
@@ -53,8 +53,8 @@
 #include "DisplayController.h"
 
 #define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
-#define I2C_PIN_1 12 // SDA
-#define I2C_PIN_2 14 // SDC
+#define I2C_PIN_1 14 // SDA
+#define I2C_PIN_2 12 // SDC
 
 #define HARD_RESET_PIN 0
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
