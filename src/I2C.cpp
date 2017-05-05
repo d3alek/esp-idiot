@@ -32,7 +32,7 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
     else if (device == 60) {
         Logger.println("Ignoring I2C screen from senses");
     }
-    else if (device == 8) {
+    else {
         error = false;
         version_byte = low_byte = high_byte = 0;
 
@@ -113,41 +113,6 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         }
        
     }
-    else {
-        error = false;
-        version_byte = low_byte = high_byte = 0;
-        Wire.beginTransmission(device);
-        Wire.requestFrom(device, 1);
-        available = Wire.available();
-        if (available != 1) {
-            error = true;
-            Logger.printf("[I2C-%d low byte] Expected 1 available but got %d instead\n", device, available);
-        }
-        else {
-            low_byte = Wire.read();
-        }
-
-        Wire.requestFrom(device, 1);
-        if (available != 1) {
-            error = true;
-            Logger.printf("[I2C-%d high byte] Expected 1 available but got %d instead\n", device, available);
-        }
-        else {
-            high_byte = Wire.read();
-        }
-
-        error = Wire.endTransmission() || error;
-
-        value = word(high_byte, low_byte);
-
-        if (error) {
-            Logger.printf("Marking I2C read value as wrong because endTransmission returned error %d\n", error);
-            jsonObject[String(key)] = String("w") + int((100*value) / 1024);
-        }
-        else {
-            jsonObject[String(key)] = int((100*value) / 1024);
-        }
-    }    
   }
 }
 
