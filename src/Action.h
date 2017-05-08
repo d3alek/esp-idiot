@@ -9,12 +9,8 @@ class Action {
   public:
     Action();
     Action(const char*);
-    static void buildThresholdDeltaString(char*, int, int);
-    static bool fromConfig(const char*, const char*, Action*);
-    void parseThresholdDeltaString(const char*);
-    void buildSenseAndGpioString(char*);
-    void setGpio(int);
-    void setAboveThresholdGpioState(bool);
+    bool fromConfig(const char* Action);
+    void buildActionString(char*);
     bool getAboveThresholdGpioState();
     
     const char* getSense();
@@ -22,7 +18,6 @@ class Action {
     int getDelta();
     int getGpio();
     
-    void parseSenseAndGpio(const char*);
     void printTo(IdiotLogger);
   private:
     char _sense[30];

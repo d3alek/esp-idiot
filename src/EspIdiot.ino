@@ -1,4 +1,4 @@
-#define VERSION "z13"
+#define VERSION "z14"
 
 #include <Arduino.h>
 
@@ -146,7 +146,7 @@ void updateFromS3(char* updatePath) {
   display.refresh(state);
 
   char updateUrl[100];
-  strcpy(updateUrl, "http://zelenik.otselo.eu/firmware/");
+  strcpy(updateUrl, UPDATE_URL);
   strcat(updateUrl, updatePath);
   Logger.print("Starting OTA update: ");
   Logger.println(updateUrl);
@@ -180,7 +180,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   normalizedPayload[length]='\0';
   Logger.println(normalizedPayload);
-  loadConfig(normalizedPayload);
+  loadConfig(normalizedPayload, true);
 }
 
 // Appends UUID to topic prefix and saves it in topic. Using separate
@@ -420,7 +420,7 @@ void loop(void)
     Logger.println("Loaded config:");
     Logger.println(config);
     yield();
-    loadConfig(config);
+    loadConfig(config, false);
     if (mqttClient.state() == MQTT_CONNECTED) {
       toState(update_config);
     }
@@ -740,7 +740,7 @@ void buildSenseKey(char* sense, const char* sensor, const char* readingName) {
   strcat(sense, readingName);
 }
 
-void loadConfig(char* string) {
+void loadConfig(char* string, bool from_server) {
   StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
   JsonObject& root = jsonBuffer.parseObject(string);
   if (!root.success()) {
@@ -751,11 +751,11 @@ void loadConfig(char* string) {
     return;
   }
   
-  loadConfigFromJson(root);
+  loadConfigFromJson(root, from_server);
 }
 
-void loadConfigFromJson(JsonObject& config) {
-    if (config.containsKey("version")) {
+void loadConfigFromJson(JsonObject& config, bool from_server) {
+    if (from_server && config.containsKey("version")) {
         const char* version = config["version"];
         if (strcmp(version, VERSION) == 0) {
             configChanged = true; // to push the new version to the cloud, notifying of the successful update
@@ -771,12 +771,15 @@ void loadConfigFromJson(JsonObject& config) {
         }
     }
     if (config.containsKey("gpio")) {
+        configChanged = true;
         loadGpioConfig(config["gpio"]);
     }
     if (config.containsKey("mode")) {
+        configChanged = true;
         loadMode(config["mode"]);
     }
     if (config.containsKey("actions")) {
+        configChanged = true;
         loadActions(config["actions"]);
     }
     if (config.containsKey("t")) {
@@ -799,63 +802,30 @@ void loadMode(JsonObject& modeJson) {
         const char* key = it->key;
         int pinNumber = atoi(key);
         GpioMode.set(pinNumber, it->value.asString());
-        configChanged = true;
     }
 }
 
-void loadActions(JsonObject& actionsJson) {
-  for (JsonObject::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
-  {
-    const char* key = it->key;
-    configChanged = true;
-    Action action;
-    bool success = Action::fromConfig(key, it->value, &action);
-    if (!success) {
-        Logger.print("Could not parse action: ");
-        action.printTo(Logger);
-        continue;
-    }
-    Logger.print("Found configured action: ");
-    action.printTo(Logger);
+void loadActions(JsonArray& actionsJson) {
+    actionsSize = 0;
+    for (JsonArray::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
+    {
+        const char* action_string = *it;
+        Action action;
+        bool success = action.fromConfig(action_string);
 
-    bool foundSameSenseGpio = false;
-    for (int i = 0; i < actionsSize; ++i) {
-        if (strcmp(actions[i].getSense(), action.getSense()) == 0
-                && actions[i].getGpio() == action.getGpio()) {
-            foundSameSenseGpio = true;
-            if (action.getDelta() == -2) {
-                Logger.println("Removing action because delta is -2");
-                actions[i].printTo(Logger);
-                removeAction(i);
-            }
-            else {
-                Logger.print("Replacing: ");
-                actions[i].printTo(Logger);
-                actions[i] = action;
-            }
+        if (!success) {
+            Logger.print("Could not parse action: ");
+            action.printTo(Logger);
+            continue;
+        }
+        if (actionsSize + 1 >= MAX_ACTIONS_SIZE) {
+            Logger.println("Too many actions already, ignoring the rest");
             break;
         }
-    }
-    if (!foundSameSenseGpio) {
-        if (actionsSize + 1 >= MAX_ACTIONS_SIZE) {
-            Logger.println("Too many actions already, ignoring this one");
-        }
-        if (action.getDelta() == -2) {
-            Logger.println("Action is marked for removal. Ignoring.");
-        }
-        else {
-            actions[actionsSize] = action;
-            actionsSize++;
-        }
-    }
-  }
-}
 
-void removeAction(int index) {
-  for (int i = index; i < actionsSize - 1; ++i) {
-    actions[i] = actions[i+1];
-  }
-  actionsSize = actionsSize - 1;
+        action.printTo(Logger);
+        actions[actionsSize++] = action;
+    }
 }
 
 void loadGpioConfig(JsonObject& gpio) {
@@ -865,7 +835,6 @@ void loadGpioConfig(JsonObject& gpio) {
     const char* key = it->key;
     int pinNumber = atoi(key);
     makeDevicePinPairing(pinNumber, it->value.asString());
-    configChanged = true;
   }
 }
 
@@ -895,7 +864,7 @@ void injectConfig(JsonObject& config) {
     gpio.set(String(oneWirePin), "OneWire");
   }
 
-  JsonObject& actions = config.createNestedObject("actions");
+  JsonArray& actions = config.createNestedArray("actions");
   injectActions(actions);
 
   JsonObject& mode = config.createNestedObject("mode");
@@ -915,14 +884,12 @@ void saveConfig() {
   PersistentStore.putConfig(configString);
 }
 
-void injectActions(JsonObject& actionsJson) {
+void injectActions(JsonArray& actionsJson) {
   for (int i = 0; i < actionsSize; ++i) {
     Action action = actions[i];
-    char thresholdDeltaString[20];
-    Action::buildThresholdDeltaString(thresholdDeltaString, action.getThreshold(), action.getDelta());
-    char senseAndGpioString[30];
-    action.buildSenseAndGpioString(senseAndGpioString);
-    actionsJson[String(senseAndGpioString)] = String(thresholdDeltaString);
+    char action_string[50];
+    action.buildActionString(action_string);
+    actionsJson.add(String(action_string));
   }
 }
 

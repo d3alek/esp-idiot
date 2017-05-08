@@ -6,47 +6,6 @@
 
 #include "Action.h"
 
-void Action::buildThresholdDeltaString(char* thresholdDeltaString, int threshold, int delta) {
-  sprintf(thresholdDeltaString, "%d~%d", threshold, delta);
-}
-
-void Action::parseThresholdDeltaString(const char* thresholdDeltaString) {
-  if (thresholdDeltaString == NULL) {
-    return;
-  }
-  int bufferSize = 10;
-  char buffer[bufferSize];
-  int i;
-  int stringLength = strlen(thresholdDeltaString);
-  for (i = 0; i < stringLength && i < bufferSize - 1; ++i) {
-    if (thresholdDeltaString[i] != '~') {
-      buffer[i] = thresholdDeltaString[i];
-    }
-    else {
-      break;
-    }
-  }
-  buffer[i] = '\0';
-
-  _threshold = atoi(buffer);
-  int j;
-  ++i; // skip the ~
-  for (j = 0; i < stringLength && j < bufferSize - 1; ++j, i++) {
-    buffer[j] = thresholdDeltaString[i];
-  }
-  buffer[j] = '\0';
-  
-  _delta = atoi(buffer);
-}
-
-void Action::setGpio(int gpio) {
-  _gpio = gpio;
-}
-
-void Action::setAboveThresholdGpioState(bool state) {
-    _aboveThresholdGpioState = state;
-}
-
 const char* Action::getSense() {
   return _sense;
 }
@@ -82,48 +41,62 @@ int Action::getGpio() {
   return _gpio;
 }
 
-bool Action::fromConfig(const char* senseAndGpioString, const char* thresholdDeltaString, Action* action) {
-  if (strlen(senseAndGpioString) < 3) {
-      return false;
-  }
-  action->parseSenseAndGpio(senseAndGpioString);
-  action->parseThresholdDeltaString(thresholdDeltaString);
-  if (action->getDelta() == -1) {
-    return false;
-  }
-  return true;
-}
-
-void Action::parseSenseAndGpio(const char* senseAndGpioString) {
-    int stringLength = strlen(senseAndGpioString);
-    // string begins with A| which stands for Action  - skip the first 2 characters then
-    int toSkip = 2;
-    const char* gpioBegin = strchr(senseAndGpioString+toSkip, (int)'|') + 1;
-    int senseLength = gpioBegin-senseAndGpioString-toSkip-1;
-    strncpy(_sense, senseAndGpioString+toSkip, senseLength);
-    _sense[senseLength]='\0';
-    _gpio = atoi(gpioBegin);
-
-    if (senseAndGpioString[stringLength-1] == 'L') {
-        _aboveThresholdGpioState = 0;
-    }
-    else if (senseAndGpioString[stringLength-1] == 'H') {
-        _aboveThresholdGpioState = 1;
+bool Action::fromConfig(const char* action_string) {
+    int string_length = strlen(action_string);
+    const char* gpio_begin = strchr(action_string, (int)'|');
+    if (gpio_begin == NULL) {
+        return false;
     }
     else {
-        // if L or H not specified, assume H
+        gpio_begin += 1;
+    }
+
+    int sense_length = gpio_begin-action_string-1;
+    strncpy(_sense, action_string, sense_length);
+    _sense[sense_length]='\0';
+    _gpio = atoi(gpio_begin);
+
+    const char* write_begin = strchr(gpio_begin, (int)'|');
+    if (write_begin == NULL) {
+        return false;
+    }
+    else {
+        write_begin += 1;
+    }
+
+    if (write_begin[0] == 'L') {
+        _aboveThresholdGpioState = 0;
+    }
+    else {
         _aboveThresholdGpioState = 1;
     }
+
+    const char* threshold_begin = strchr(write_begin, (int)'|');
+
+    if (threshold_begin == NULL) {
+        return false;
+    }
+    else {
+        threshold_begin += 1;
+    }
+
+    _threshold = atoi(threshold_begin);
+
+    const char* delta_begin = strchr(threshold_begin, (int)'|');
+    if (delta_begin == NULL) {
+        return false;
+    }
+    else {
+        delta_begin += 1;
+    }
+
+    _delta = atoi(delta_begin);
+
+    return true;
 }
 
-void Action::buildSenseAndGpioString(char* senseAndGpioString) {
-    strcpy(senseAndGpioString, "A|");
-    strcat(senseAndGpioString, _sense);
-    strcat(senseAndGpioString, "|");
-    char buf[4];
-    sprintf(buf, "%d", _gpio);
-    strcat(senseAndGpioString, buf);
-    strcat(senseAndGpioString, _aboveThresholdGpioState ? "H":"L");
+void Action::buildActionString(char* action_string) {
+    sprintf(action_string, "%s|%d|%s|%d|%d", _sense, _gpio, _aboveThresholdGpioState ? "H":"L", _threshold, _delta);
 }
 
 void Action::printTo(IdiotLogger logger) {

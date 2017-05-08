@@ -8,7 +8,7 @@ if [[ -z "$VERSION" ]]; then
 fi
 
 
-echo "Pushing version $VERSION..."
+echo "Pushing prod version $VERSION..."
 
 pio run && \
     cp .pioenvs/esp12e/firmware.bin /www/zelenik/firmware/$VERSION.bin && \
