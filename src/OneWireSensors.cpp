@@ -1,12 +1,8 @@
 #include "OneWireSensors.h"
 
-// code from http://playground.arduino.cc/Learning/OneWire
 void OneWireSensors::readOneWire(IdiotLogger Logger, int oneWirePin, JsonObject& jsonObject) {
     OneWire oneWire(oneWirePin);
     int devicesFound = 0;
-    byte i;
-    byte present = 0;
-    byte data[12];
     byte addr[8];
 
     oneWire.reset_search();
@@ -32,9 +28,11 @@ void OneWireSensors::readOneWire(IdiotLogger Logger, int oneWirePin, JsonObject&
         Logger.print(device);
         if ( addr[0] == 0x10) {
             Logger.println(" DS18S20 family device");
+            readDS18x20(Logger, oneWire, addr, device, jsonObject);
         }
         else if ( addr[0] == 0x28) {
             Logger.println(" DS18B20 family device.");
+            readDS18x20(Logger, oneWire, addr, device, jsonObject);
         }
         else {
             Logger.print(" Device family not recognized: 0x");
@@ -42,52 +40,78 @@ void OneWireSensors::readOneWire(IdiotLogger Logger, int oneWirePin, JsonObject&
             jsonObject[String(device)] = "not supported";
             continue;
         }
-
-        oneWire.reset();
-        oneWire.select(addr);
-        oneWire.write(0x44);         // start conversion, without parasite power
-
-        delay(1000);     // maybe 750ms is enough, maybe not
-        // we might do a ds.depower() here, but the reset will take care of it.
-
-        present = oneWire.reset();
-        oneWire.select(addr);    
-        oneWire.write(0xBE);         // Read Scratchpad
-
-        Logger.print("P=");
-        Logger.print(present,HEX);
-        Logger.print(" ");
-        for ( i = 0; i < 9; i++) {           // we need 9 bytes
-            data[i] = oneWire.read();
-            Logger.print(data[i], HEX);
-            Logger.print(" ");
-        }
-        Logger.print(" CRC=");
-        Logger.print( OneWire::crc8( data, 8), HEX);
-        Logger.println();
-
-        int HighByte, LowByte, TReading, SignBit, Tc_100, Whole, Fract;
-        LowByte = data[0];
-        HighByte = data[1];
-        TReading = (HighByte << 8) + LowByte;
-        SignBit = TReading & 0x8000;  // test most sig bit
-        if (SignBit) // negative
-        {
-            TReading = (TReading ^ 0xffff) + 1; // 2's comp
-        }
-        Tc_100 = (TReading*100/2); // for S family
-        // Tc_100 = (6 * TReading) + TReading / 4;    // multiply by (100 * 0.0625) or 6.25 (for B family)
-
-        Whole = Tc_100 / 100;  // separate off the whole and fractional portions
-        Fract = Tc_100 % 100;
-
-        char buf[20];
-        sprintf(buf, "%c%d.%d",SignBit ? '-' : ' ', Whole, Fract < 10 ? 0 : Fract);
-        jsonObject[String(device)] = String(buf);
-        Logger.println(buf);
     }
     Logger.print("OneWire devices found: ");
     Logger.println(devicesFound);
+}
+
+// code from 
+// https://github.com/PaulStoffregen/OneWire/blob/master/examples/DS18x20_Temperature/DS18x20_Temperature.pde
+void OneWireSensors::readDS18x20(IdiotLogger Logger, OneWire& oneWire, byte* addr, char* device, JsonObject& jsonObject) {
+
+    byte type_s;
+    if (addr[0] == 0x10) {
+        type_s = 1;
+    }
+    else if (addr[0] == 0x28) {
+        type_s = 0;
+    }
+    else {
+        Logger.println("Sensor addr not recongized as DS18x20.");
+        jsonObject[String(device)] = "not recognized";
+        return;
+    }
+
+    byte present = 0;
+    byte i;
+    byte data[12];
+
+    oneWire.reset();
+    oneWire.select(addr);
+    oneWire.write(0x44);         // start conversion, without parasite power
+
+    delay(1000);     // maybe 750ms is enough, maybe not
+    // we might do a ds.depower() here, but the reset will take care of it.
+
+    present = oneWire.reset();
+    oneWire.select(addr);    
+    oneWire.write(0xBE);         // Read Scratchpad
+
+    Logger.print("P=");
+    Logger.print(present,HEX);
+    Logger.print(" ");
+    for ( i = 0; i < 9; i++) {           // we need 9 bytes
+        data[i] = oneWire.read();
+        Logger.print(data[i], HEX);
+        Logger.print(" ");
+    }
+    Logger.print(" CRC=");
+    Logger.print( OneWire::crc8( data, 8), HEX);
+    Logger.println();
+
+    // Convert the data to actual temperature
+    // because the result is a 16 bit signed integer, it should
+    // be stored to an "int16_t" type, which is always 16 bits
+    // even when compiled on a 32 bit processor.
+    int16_t raw = (data[1] << 8) | data[0];
+    if (type_s) {
+        raw = raw << 3; // 9 bit resolution default
+        if (data[7] == 0x10) {
+            // "count remain" gives full 12 bit resolution
+            raw = (raw & 0xFFF0) + 12 - data[6];
+        }
+    } else {
+        byte cfg = (data[4] & 0x60);
+        // at lower res, the low bits are undefined, so let's zero them
+        if (cfg == 0x00) raw = raw & ~7;  // 9 bit resolution, 93.75 ms
+        else if (cfg == 0x20) raw = raw & ~3; // 10 bit res, 187.5 ms
+        else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
+        //// default is 12 bit resolution, 750 ms conversion time
+    }
+    float celsius = (float)raw / 16.0;
+
+    jsonObject[String(device)] = celsius;
+    Logger.println(celsius);
 }
 
 // buffer must be at least 17 long, bytes are assumed to be 8

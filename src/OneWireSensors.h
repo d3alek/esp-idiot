@@ -13,6 +13,7 @@ class OneWireSensors {
     void readOneWire(IdiotLogger, int, JsonObject&); 
   private:
     void bytesToHex(char*, const byte*);
+    void readDS18x20(IdiotLogger, OneWire&, byte[], char*, JsonObject&); 
 };
 
 
