@@ -1,9 +1,11 @@
 #include "I2C.h"
 
+#define I2C_WAIT_DELAY 85
+
 void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
   Wire.pins(i2cPin1, i2cPin2);
   Wire.begin();
-  Wire.setClockStretchLimit(1500); // in µs
+  Wire.setClockStretchLimit(2000); // in µs
 
   scan(Logger);
 
@@ -40,7 +42,7 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         Wire.write(0x1);
         Wire.endTransmission(false);
 
-        delay(85);
+        delay(I2C_WAIT_DELAY);
 
         Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
@@ -55,13 +57,13 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
 
         error = Wire.endTransmission(false) || error;
 
-        delay(85);
+        delay(I2C_WAIT_DELAY);
 
         Wire.beginTransmission(device);
         Wire.write(0x2);
         Wire.endTransmission(false);
 
-        delay(85);
+        delay(I2C_WAIT_DELAY);
 
         Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
@@ -76,13 +78,13 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
 
         error = Wire.endTransmission(false) || error;
         
-        delay(85);
+        delay(I2C_WAIT_DELAY);
 
         Wire.beginTransmission(device);
         Wire.write(0x3);
         Wire.endTransmission(false);
 
-        delay(85);
+        delay(I2C_WAIT_DELAY);
 
         Wire.beginTransmission(device);
         Wire.requestFrom(device, 1);
@@ -96,20 +98,20 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
 
         error = Wire.endTransmission() || error;
 
-        delay(85);
+        delay(I2C_WAIT_DELAY);
 
         value = word(high_byte, low_byte);
 
         if (version_byte != 1) {
             Logger.printf("Marking I2C read value as wrong because I2C device has wrong version. Expected 1 got %d\n", version_byte);
-            jsonObject[String(key)] = String("w") + int((100*value) / 1024);
+            jsonObject[String(key)] = String("w") + value;
         }
         else if (error) {
             Logger.printf("Marking I2C read value as wrong because endTransmission returned error %d\n", error);
-            jsonObject[String(key)] = String("w") + int((100*value) / 1024);
+            jsonObject[String(key)] = String("w") + value;
         }
         else {
-            jsonObject[String(key)] = int((100*value) / 1024);
+            jsonObject[String(key)] = value;
         }
        
     }

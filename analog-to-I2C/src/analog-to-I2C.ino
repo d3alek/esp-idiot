@@ -7,8 +7,6 @@
 #define LED_PIN 1
 #define ANALOG_PIN 2 // actual pin 4 but analog and digital pins mismatch
 
-#define MAX_SAMPLES 5
-
 long last_status_light_update = 0;
 
 int sample = 42; // distinguishable number
