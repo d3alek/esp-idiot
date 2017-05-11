@@ -1,4 +1,4 @@
-#define VERSION "z14.11"
+#define VERSION "z15"
 
 #include <Arduino.h>
 
@@ -215,77 +215,77 @@ bool mqttConnect() {
 }
 
 void hardReset() {
-  toState(hard_reset);
+    toState(hard_reset);
 
-  SPIFFS.format();
-  ESP.eraseConfig();
+    SPIFFS.format();
+    ESP.eraseConfig();
 
-  PersistentStore.clear();
-  EspControl.restart();
-}
-
-void updateDisplayMode() {
-    if (!digitalRead(DISPLAY_CONTROL_PIN)) {
-        display.changeMode();
-    }
+    PersistentStore.clear();
+    EspControl.restart();
 }
 
 void setup(void)
 {
-  last_loop = millis();
-  tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
-  
-  Serial.begin(115200);
-  Serial.setDebugOutput(true);
-  Serial.println();
-  SPIFFS.begin();
-  
-  if (ESP.getResetReason().equals("Hardware Watchdog")) {
-    Serial.println("Clearing state because Hardware Watchdog reset detected.");
-    SPIFFS.format();
-    ESP.eraseConfig();
-    ESP.reset();
-  }
-  
-  Logger.begin();
+    last_loop = millis();
+    tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
 
-  Serial.println(ESP.getResetReason());
-  Serial.println(ESP.getResetInfo());
+    Serial.begin(115200);
+    Serial.setDebugOutput(true);
+    Serial.println();
+    SPIFFS.begin();
 
-  Serial.println("Setup starting");
-  
-  sprintf(uuid, "%s-%d", uuidPrefix, chipId);
-  Logger.printf("UUID: %s VERSION: %s\n", uuid, VERSION);
-  FSInfo fsInfo;
-  SPIFFS.info(fsInfo);
+    if (ESP.getResetReason().equals("Hardware Watchdog")) {
+        Serial.println("Clearing state because Hardware Watchdog reset detected.");
+        SPIFFS.format();
+        ESP.eraseConfig();
+        ESP.reset();
+    }
 
-  Logger.printf("Used bytes: %d Total bytes: %d\n", fsInfo.usedBytes, fsInfo.totalBytes);
+    Logger.begin();
 
-  PersistentStore.begin();
-  
-  WiFi.mode(WIFI_STA);
+    Serial.println(ESP.getResetReason());
+    Serial.println(ESP.getResetInfo());
 
-  ensureGpio(PIN_A, 0);
-  ensureGpio(PIN_B, 0);
-  ensureGpio(PIN_C, 0);
-  ensureGpio(I2C_POWER, 0);
-   
-  pinMode(HARD_RESET_PIN, INPUT);
-  delay(1000);
-  if(!digitalRead(HARD_RESET_PIN)) {
-    hardReset();
-  }
+    Serial.println("Setup starting");
+
+    sprintf(uuid, "%s-%d", uuidPrefix, chipId);
+    Logger.printf("UUID: %s VERSION: %s\n", uuid, VERSION);
+    FSInfo fsInfo;
+    SPIFFS.info(fsInfo);
+
+    Logger.printf("Used bytes: %d Total bytes: %d\n", fsInfo.usedBytes, fsInfo.totalBytes);
+
+    PersistentStore.begin();
+
+    WiFi.mode(WIFI_STA);
+
+    ensureGpio(PIN_A, 0);
+    ensureGpio(PIN_B, 0);
+    ensureGpio(PIN_C, 0);
+    ensureGpio(I2C_POWER, 0);
+
+    pinMode(HARD_RESET_PIN, INPUT);
+    delay(1000);
+    if(!digitalRead(HARD_RESET_PIN)) {
+        hardReset();
+    }
+
+    pinMode(DISPLAY_CONTROL_PIN, INPUT);
+    attachInterrupt(DISPLAY_CONTROL_PIN, displayButtonPressed, FALLING);
+}
+
+
+void displayButtonPressed() {
+    display.changeMode();
 }
 
 void loop(void)
 {
   last_loop = millis();
+  display.refresh(state);
   
   idiotWifiServer.handleClient();
 
-  updateDisplayMode();
-  display.refresh(state);
-  
   if (state == boot) {
 
     wifiConnectAttempts = 0;
@@ -494,10 +494,10 @@ void loop(void)
     Logger.printf("readSensesResult: %s\n", readSensesResult);
 
     doActions(senses);
-    display.update(senses);
 
     digitalWrite(I2C_POWER, 0);
 
+    display.update(senses);
     toState(publish);
   }
   else if (state == publish) {

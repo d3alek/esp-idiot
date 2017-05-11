@@ -11,7 +11,7 @@
 
 class DisplayController {
     public:
-        static int parseInt(JsonVariant& valueObject);
+        static float parseFloat(JsonVariant& valueObject);
 
         DisplayController(OLED);
         void refresh(state_enum);
@@ -24,6 +24,7 @@ class DisplayController {
         int displayables_size;
         int displayables_counter;
         unsigned long last_refresh_millis;
-        int mode;
+        volatile int mode;
+        volatile bool changed;
 };
 #endif

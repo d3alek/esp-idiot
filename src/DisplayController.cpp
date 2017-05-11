@@ -6,6 +6,7 @@ DisplayController::DisplayController(OLED oled) {
     displayables_counter = 0;
     last_refresh_millis = 0;
     mode = 0;
+    changed = true;
 
     oled.begin();
     oled.on();
@@ -21,10 +22,13 @@ void DisplayController::displayDetailed(int displayable_index) {
 }
 
 void DisplayController::refresh(state_enum state) {
-
     if (state == serve_locally) {
         return;
     }
+    if (!changed) {
+        return;
+    }
+    changed = false;
     oled.clear();
     oled.print("Zelenik");
 
@@ -54,23 +58,27 @@ void DisplayController::refresh(state_enum state) {
 void DisplayController::update(JsonObject& senses) {
     int counter = 0;
     for (JsonObject::iterator it = senses.begin(); it != senses.end(); ++it) {
-        displayables[counter++] = Displayable(it->key, parseInt(it->value));
+        displayables[counter++] = Displayable(it->key, parseFloat(it->value));
         if (counter >= MAX_DISPLAYABLES) {
             break;
         }
     }
     displayables_size = counter;
+    changed = true;
 }
 
-int DisplayController::parseInt(JsonVariant& valueObject) {
-    int value = -2;
+float DisplayController::parseFloat(JsonVariant& valueObject) {
+    float value = -2;
     if (valueObject.is<int>()) {
+        value = valueObject;
+    }
+    else if (valueObject.is<float>()) {
         value = valueObject;
     }
     else if (valueObject.is<const char*>()) {
         const char* valueString = valueObject;
         if (valueString != NULL) {
-            value = atoi(valueObject);
+            value = atof(valueObject);
         }
     }
     return value;
@@ -78,4 +86,5 @@ int DisplayController::parseInt(JsonVariant& valueObject) {
 
 void DisplayController::changeMode() {
     mode = (mode + 1) % (displayables_size + 1);
+    changed = true;
 }

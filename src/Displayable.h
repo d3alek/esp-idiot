@@ -4,7 +4,7 @@
 class Displayable {
   public:
     Displayable();
-    Displayable(const char*, int);
+    Displayable(const char*, float);
     
     const char* getString();
   private:
