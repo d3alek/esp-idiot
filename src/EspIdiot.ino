@@ -1,4 +1,4 @@
-#define VERSION "z15"
+#define VERSION "z15.5"
 
 #include <Arduino.h>
 
@@ -271,12 +271,17 @@ void setup(void)
     }
 
     pinMode(DISPLAY_CONTROL_PIN, INPUT);
-    attachInterrupt(DISPLAY_CONTROL_PIN, displayButtonPressed, FALLING);
+    attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
 }
 
+volatile unsigned long lastInterruptTime = 0;
+volatile unsigned long debounceDelay = 50; 
 
-void displayButtonPressed() {
-    display.changeMode();
+void interruptDisplayButtonPressed() {
+    lastInterruptTime = millis();
+    if (millis() - lastInterruptTime > debounceDelay) {
+        display.changeMode();
+    }
 }
 
 void loop(void)
