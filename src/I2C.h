@@ -9,6 +9,7 @@
 #include "I2CSoilMoistureSensor.h"
 
 #define MAX_DEVICES 10
+#define EXPECTED_VERSION 2
 
 class I2C {
   public:

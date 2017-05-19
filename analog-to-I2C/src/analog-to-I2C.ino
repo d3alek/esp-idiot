@@ -15,7 +15,7 @@ int sample = 42; // distinguishable number
 
 volatile uint8_t to_send[4] {
     0x0,
-    0x1, // version
+    0x2, // version
     0x0, // low byte
     0x0 // high byte
 };
@@ -66,8 +66,18 @@ void update_status_light() {
   }
 }
 
+int append_one_count(int sample) {
+    byte one_count = 0;
+    int mask = 1 << 11;
+    while (mask > 0) {
+        one_count += ((sample & mask) > 0);
+        mask >>= 1;
+    }
+    return sample | (one_count << 12);
+}
+
 void collect_sample() {
-  sample = analogRead(ANALOG_PIN);
+  sample = append_one_count(analogRead(ANALOG_PIN));
   noInterrupts();
   to_send[2] = lowByte(sample);
   to_send[3] = highByte(sample);

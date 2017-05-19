@@ -2,6 +2,17 @@
 
 #define I2C_WAIT_DELAY 85
 
+int count_ones(int value) {
+    int count = 0;
+    int mask = 1 << 11;
+    while (mask > 0) {
+        count += (value & mask) > 0;
+        mask >>= 1;
+    }
+
+    return count;
+}
+
 void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
   Wire.pins(i2cPin1, i2cPin2);
   Wire.begin();
@@ -9,7 +20,7 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
 
   scan(Logger);
 
-  int available, error, value;
+  int available, error, value, expected_one_count, actual_one_count;
   byte low_byte, high_byte, version_byte;
   for (int i = 0; i < devices_size; ++i) {
     int device = devices[i];
@@ -102,8 +113,17 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
 
         value = word(high_byte, low_byte);
 
-        if (version_byte != 1) {
-            Logger.printf("Marking I2C read value as wrong because I2C device has wrong version. Expected 1 got %d\n", version_byte);
+        expected_one_count = value >> 12;
+        value = value & ((1 << 12) - 1);
+
+        actual_one_count = count_ones(value);
+
+        if (version_byte != EXPECTED_VERSION) {
+            Logger.printf("Marking I2C read value as wrong because I2C device has wrong version. Expected %d got %d\n", EXPECTED_VERSION, version_byte);
+            jsonObject[String(key)] = String("w") + value;
+        }
+        else if (actual_one_count != expected_one_count) {
+            Logger.printf("Marking I2C read value as wrong because one-count check failed: expected %d, got %d\n", expected_one_count, actual_one_count);
             jsonObject[String(key)] = String("w") + value;
         }
         else if (error) {
@@ -117,6 +137,7 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
     }
   }
 }
+
 
 void I2C::scan(IdiotLogger Logger) {
   int error, address;
