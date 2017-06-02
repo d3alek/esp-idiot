@@ -1,4 +1,4 @@
-#define VERSION "z15.5"
+#define VERSION "z16.2"
 
 #include <Arduino.h>
 
@@ -59,12 +59,12 @@
 #define HARD_RESET_PIN 0
 #define LOCAL_PUBLISH_FILE "localPublish.txt"
 
-#define MAX_STATE_JSON_LENGTH 512
+#define MAX_STATE_JSON_LENGTH 740
 
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
 #define MAX_LOCAL_PUBLISH_FILE_BYTES 150000 // 150kb
-#define MAX_READ_SENSES_RESULT_SIZE 300
+#define MAX_READ_SENSES_RESULT_SIZE 512
 #define DELTA_WAIT_SECONDS 2
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
@@ -143,7 +143,7 @@ void toState(state_enum newState) {
 // See https://github.com/esp8266/Arduino/issues/1722
 void updateFromS3(char* updatePath) {
   toState(ota_update);
-  display.refresh(state);
+  display.refresh(state, true);
 
   char updateUrl[100];
   strcpy(updateUrl, UPDATE_URL);
@@ -270,17 +270,18 @@ void setup(void)
         hardReset();
     }
 
-    pinMode(DISPLAY_CONTROL_PIN, INPUT);
-    attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
+    
 }
 
 volatile unsigned long lastInterruptTime = 0;
-volatile unsigned long debounceDelay = 50; 
+volatile unsigned long debounceDelay = 300; 
 
-void interruptDisplayButtonPressed() {
-    lastInterruptTime = millis();
+void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
+    Logger.println("interrupt");
     if (millis() - lastInterruptTime > debounceDelay) {
+        Logger.println("change mode");
         display.changeMode();
+        lastInterruptTime = millis();
     }
 }
 
@@ -292,6 +293,8 @@ void loop(void)
   idiotWifiServer.handleClient();
 
   if (state == boot) {
+    pinMode(DISPLAY_CONTROL_PIN, INPUT);
+    attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
 
     wifiConnectAttempts = 0;
     mqttConnectAttempts = 0;
@@ -529,6 +532,7 @@ void loop(void)
     }
   }
   else if (state == cool_off) {
+    detachInterrupt(DISPLAY_CONTROL_PIN); 
     WiFi.disconnect();
     toState(boot);
     delay(1000);

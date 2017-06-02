@@ -20,12 +20,15 @@ void DisplayController::displayDetailed(int displayable_index) {
         oled.print(s, 7, 3);
     }
 }
-
 void DisplayController::refresh(state_enum state) {
+    refresh(state, false);
+}
+
+void DisplayController::refresh(state_enum state, bool force) {
     if (state == serve_locally) {
         return;
     }
-    if (!changed) {
+    if (!force && !changed) {
         return;
     }
     changed = false;

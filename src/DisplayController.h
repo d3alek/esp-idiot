@@ -15,6 +15,7 @@ class DisplayController {
 
         DisplayController(OLED);
         void refresh(state_enum);
+        void refresh(state_enum, bool);
         void update(JsonObject&);
         void changeMode();
         void displayDetailed(int);
