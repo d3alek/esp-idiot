@@ -6,6 +6,8 @@
 #include <ArduinoJson.h>
 #include "OneWire.h"
 
+#include "Sense.cpp"
+
 #include "IdiotLogger.h"
 
 class OneWireSensors {

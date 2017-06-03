@@ -36,8 +36,6 @@ void OneWireSensors::readOneWire(IdiotLogger Logger, int oneWirePin, JsonObject&
         }
         else {
             Logger.print(" Device family not recognized: 0x");
-            Logger.println(addr[0],HEX);
-            jsonObject[String(device)] = "not supported";
             continue;
         }
     }
@@ -58,7 +56,6 @@ void OneWireSensors::readDS18x20(IdiotLogger Logger, OneWire& oneWire, byte* add
     }
     else {
         Logger.println("Sensor addr not recongized as DS18x20.");
-        jsonObject[String(device)] = "not recognized";
         return;
     }
 
@@ -110,7 +107,7 @@ void OneWireSensors::readDS18x20(IdiotLogger Logger, OneWire& oneWire, byte* add
     }
     float celsius = (float)raw / 16.0;
 
-    jsonObject[String(device)] = celsius;
+    jsonObject[String(device)] = setSenseValue(jsonObject[String(device)], celsius);
     Logger.println(celsius);
 }
 

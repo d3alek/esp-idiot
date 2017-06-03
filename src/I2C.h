@@ -7,6 +7,7 @@
 #include "Wire.h"
 #include "IdiotLogger.h"
 #include "I2CSoilMoistureSensor.h"
+#include "Sense.cpp"
 
 #define MAX_DEVICES 10
 #define EXPECTED_VERSION 2

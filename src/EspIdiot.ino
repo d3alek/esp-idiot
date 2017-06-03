@@ -52,6 +52,8 @@
 #include "Displayable.h"
 #include "DisplayController.h"
 
+#include "Sense.cpp"
+
 #define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
 #define I2C_PIN_1 14 // SDA
 #define I2C_PIN_2 12 // SDC
@@ -71,8 +73,7 @@
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
 
-#define COULD_NOT_PARSE -1002
-#define WRONG_VALUE -1003
+#define SENSE_EXPECTATIONS_WINDOW
 
 const int chipId = ESP.getChipId();
 
@@ -490,13 +491,14 @@ void loop(void)
 
     IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
 
-    senses["A0"] = int(((1024 - analogRead(A0))*100) / 1024);
+    senses["A0"] = setSenseValue(senses["A0"], int(((1024 - analogRead(A0))*100) / 1024));
 
     if (boot_time != -1) {
-        senses["time"] = seconds_today();
+        senses["time"] = setSenseValue(senses["time"], seconds_today());
     }
 
     validate(senses);
+    updateExpectations(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
@@ -539,20 +541,31 @@ void loop(void)
   }
 }
 
+bool meetsExpectations(const char* key, const char* vesw) {
+    int value = parseSenseValue(vesw)
+    int expectation = parseSenseExpectation(vesw);
+    int ssd = parseSenseSSD(vesw);
+    
+    float variance = ssd / float(SENSE_EXPECTATIONS_WINDOW-1);
+    if (expectation - variance <= value && value <= expectation + variance) {
+        return true;
+    }
+    else {
+        return false;
+    }
+}
+
 void validate(JsonObject& senses) {
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
         const char* key = it->key;
-        int value = parseValue(it->value); 
+        const char* value_string = it->value;
+        int value = parseSenseValue(value_string); 
         bool wrong = false;
         
         if (value == WRONG_VALUE) {
-            continue;
-        } 
-        else if (value == COULD_NOT_PARSE) {
             wrong = true;
-        }
+        } 
         else if (!strcmp(key, "I2C-32c")) {
-            
             if (value < 200 || value > 1000) {
                 wrong = true;
             }
@@ -562,19 +575,54 @@ void validate(JsonObject& senses) {
                 wrong = true;
             }
         }
-        if (!strcmp(key, "I2C-8") || !strcmp(key, "I2C-9") || !strcmp(key, "I2C-10")) {
+        else if (!strcmp(key, "I2C-8") || !strcmp(key, "I2C-9") || !strcmp(key, "I2C-10")) {
             if (value < 0 || value > 1024) {
                 wrong = true;
             }
         }
-        if (!strcmp(key, "OW")) {
+        else if (!strcmp(key, "OW")) {
             if (value < -100 || value > 100) {
                 wrong = true;
             }
         }
-        if (wrong) {
-            senses[key] = String("w") + value;
+        else if (!meetsExpectations(value_string)) {
+            wrong = true;
         }
+        
+        if (wrong) {
+            senses[key] = setSenseWrong(value_string, true);
+        }
+    }
+}
+
+// Modified Welford algorithm to use windwowed-mean instead of true mean
+void updateExpectations(JsonObject& senses) {
+    int previous_expectation, new_expectation, previous_ssd, new_ssd, value;
+    int delta, delta2;
+    char* key;
+    char* vesw;
+    float prior_weight = float(SENSE_EXPECTATIONS_WINDOW-1)/SENSE_EXPECTATIONS_WINDOW
+    float posterior_weight = 1./SENSE_EXPECTATIONS_WINDOW
+    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
+        key = it->key;
+        vesw = it->value;
+        value = parseSenseValue(vesw); 
+        previous_expectation = parseSenseExpectation(vesw);
+        previous_ssd = parseSenseSSD(vesw);
+
+        if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
+            Logger.printf("No expectations yet for %s, seeding with current value %d\n", key, value);
+            previous_expectation = value;
+            previous_ssd = 0;
+        }
+
+        delta = value - previous_expectation;
+        new_expectation = previous_expectation * prior_weight + value * posterior_weight; 
+        delta2 = value - new_expectation;
+        new_ssd = old_ssd * prior_weight + delta*delta2 * posterior_weight;
+        
+        Logger.printf("New expectation for %s is %d and new ssd is %d\n", key, new_expectation, new_ssd);
+        senses[key] = setSenseExpectationSSD(vesw, new_expectation, new_ssd);
     }
 }
 
@@ -599,7 +647,7 @@ void doActions(JsonObject& senses) {
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
     {
         const char* key = it->key;
-        if (is_wrong(it->value)) {
+        if (parseSenseWrong(it->value)) {
             Logger.printf("Ignoring sense [%s] because value is marked as wrong\n", key);
             continue;
         }
@@ -611,8 +659,8 @@ void doActions(JsonObject& senses) {
             Action action = actions[i];
             if (!strcmp(action.getSense(), key)) {
                 bool time_action = !strcmp(key, "time");
-                int value = parseValue(it->value); 
-                if (value == WRONG_VALUE || value == COULD_NOT_PARSE) {
+                int value = parseSenseValue(it->value); 
+                if (value == WRONG_VALUE) {
                     Logger.printf("Could parse or wrong value [%d]\n", value);
                     continue;
                 }
@@ -659,41 +707,7 @@ void doActions(JsonObject& senses) {
     }
 }
 
-bool is_wrong(JsonVariant& valueObject) {
-    if (valueObject.is<const char*>()) {
-        const char* valueString = valueObject;
-        if (valueString == NULL) {
-            return true;
-        }
-        if (strlen(valueString) > 0) {
-            return valueString[0] == 'w';
-        }
-    }
 
-    return false;
-}
-
-int parseValue(JsonVariant& valueObject) {
-    int value = 0;
-    if (is_wrong(valueObject)) {
-        return WRONG_VALUE; 
-    }
-    else if (valueObject.is<int>()) {
-        value = valueObject;
-    }
-    else if (valueObject.is<const char*>()) {
-        const char* valueString = valueObject;
-        Logger.printf("Value String [%s]\n", valueString);
-        if (valueString == NULL) {
-            Logger.println("Could not parse value integer as value is null");
-            return COULD_NOT_PARSE;
-        }
-        else {
-            value = atoi(valueObject);
-        }
-    }
-    return value;
-}
 
 void ensureGpio(int gpio, int state) {
   if (digitalRead(gpio) != state) {
@@ -738,20 +752,17 @@ bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObjec
     Logger.println(temp_c);
     Logger.print("Humidity: ");
     Logger.println(humidity);
-    char sense[15];
-    buildSenseKey(sense, dhtType, "t");
-    jsonObject[String(sense)] = temp_c;
-    buildSenseKey(sense, dhtType, "h");
-    jsonObject[String(sense)] = humidity;
+    String sense = buildSenseKey(dhtType, "t");
+    jsonObject[sense] = setSenseValue(jsonObject[sense], temp_c);
+    sense = buildSenseKey(dhtType, "h");
+    jsonObject[sense] = setSenseValue(jsonObject[sense], humidity);
     
     return true;
   }
 }
 
-void buildSenseKey(char* sense, const char* sensor, const char* readingName) {
-  strcpy(sense, sensor);
-  strcat(sense, "-");
-  strcat(sense, readingName);
+String buildSenseKey(const char* sensor, const char* readingName) {
+    return String(sensor) + "-" + String(readingName;
 }
 
 void loadConfig(char* string, bool from_server) {
