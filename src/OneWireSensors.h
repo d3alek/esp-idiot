@@ -6,7 +6,7 @@
 #include <ArduinoJson.h>
 #include "OneWire.h"
 
-#include "Sense.cpp"
+#include "Sense.h"
 
 #include "IdiotLogger.h"
 

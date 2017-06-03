@@ -1,4 +1,4 @@
-#define VERSION "z16.2"
+#define VERSION "z16.991d"
 
 #include <Arduino.h>
 
@@ -52,7 +52,7 @@
 #include "Displayable.h"
 #include "DisplayController.h"
 
-#include "Sense.cpp"
+#include "Sense.h"
 
 #define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
 #define I2C_PIN_1 14 // SDA
@@ -73,7 +73,7 @@
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
 
-#define SENSE_EXPECTATIONS_WINDOW
+#define SENSE_EXPECTATIONS_WINDOW 10
 
 const int chipId = ESP.getChipId();
 
@@ -98,7 +98,7 @@ IdiotWifiServer idiotWifiServer;
 int dht11Pin = -1;
 int dht22Pin = -1;
 int oneWirePin = -1;
-char readSensesResult[MAX_READ_SENSES_RESULT_SIZE];
+char readSensesResult[MAX_READ_SENSES_RESULT_SIZE] = "{}";
 
 char finalState[MAX_STATE_JSON_LENGTH];
 
@@ -461,7 +461,17 @@ void loop(void)
     delay(2000);
 
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
-    JsonObject& senses = jsonBuffer.createObject();
+  // parseObject and printTo the same char array do not play well, so pass it a copy here
+  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+  strcpy(readSensesResultCopy, readSensesResult);
+    JsonObject& senses = jsonBuffer.parseObject(readSensesResultCopy);
+    if (!senses.success()) {
+        Serial.println("Could not parse previous senses, clearing history and trying again...");
+        strcpy(readSensesResult, "{}");
+        return;
+    }
+
+    // TODO remove unseen senses in the next few lines from this map to avoid confusion that the device sees a sensor it does not
 
     if (dht11Pin != -1) {
       DHT dht11(dht11Pin, DHT11);
@@ -490,14 +500,17 @@ void loop(void)
     }
 
     IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
+    int brightness = int(((1024 - analogRead(A0))*100) / 1024);
 
-    senses["A0"] = setSenseValue(senses["A0"], int(((1024 - analogRead(A0))*100) / 1024));
+    senses["A0"] = Sense().fromJson(senses["A0"]).withValue(brightness).toString();
 
     if (boot_time != -1) {
-        senses["time"] = setSenseValue(senses["time"], seconds_today());
+        senses["time"] = Sense().fromJson(senses["time"]).withValue(seconds_today()).toString();
     }
 
+    Serial.println("Validating senses");
     validate(senses);
+    Serial.println("Updating expectations");
     updateExpectations(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
@@ -541,12 +554,11 @@ void loop(void)
   }
 }
 
-bool meetsExpectations(const char* key, const char* vesw) {
-    int value = parseSenseValue(vesw)
-    int expectation = parseSenseExpectation(vesw);
-    int ssd = parseSenseSSD(vesw);
+bool meetsExpectations(Sense sense) {
+    int value = sense.value;
+    int expectation = sense.expectation;
     
-    float variance = ssd / float(SENSE_EXPECTATIONS_WINDOW-1);
+    float variance = sense.ssd / float(SENSE_EXPECTATIONS_WINDOW-1);
     if (expectation - variance <= value && value <= expectation + variance) {
         return true;
     }
@@ -558,11 +570,12 @@ bool meetsExpectations(const char* key, const char* vesw) {
 void validate(JsonObject& senses) {
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
         const char* key = it->key;
-        const char* value_string = it->value;
-        int value = parseSenseValue(value_string); 
+        Sense sense = Sense().fromJson(it->value);
+        int value = sense.value;
         bool wrong = false;
-        
-        if (value == WRONG_VALUE) {
+
+        if (sense.wrong == WRONG_VALUE) {
+
             wrong = true;
         } 
         else if (!strcmp(key, "I2C-32c")) {
@@ -585,12 +598,12 @@ void validate(JsonObject& senses) {
                 wrong = true;
             }
         }
-        else if (!meetsExpectations(value_string)) {
+        else if (!meetsExpectations(sense)) {
             wrong = true;
         }
         
         if (wrong) {
-            senses[key] = setSenseWrong(value_string, true);
+            senses[key] = sense.withWrong(true).toString();
         }
     }
 }
@@ -599,30 +612,30 @@ void validate(JsonObject& senses) {
 void updateExpectations(JsonObject& senses) {
     int previous_expectation, new_expectation, previous_ssd, new_ssd, value;
     int delta, delta2;
-    char* key;
-    char* vesw;
-    float prior_weight = float(SENSE_EXPECTATIONS_WINDOW-1)/SENSE_EXPECTATIONS_WINDOW
-    float posterior_weight = 1./SENSE_EXPECTATIONS_WINDOW
+    const char* key;
+    Sense sense;
+    float prior_weight = float(SENSE_EXPECTATIONS_WINDOW-1)/SENSE_EXPECTATIONS_WINDOW;
+    float posterior_weight = 1./SENSE_EXPECTATIONS_WINDOW;
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
         key = it->key;
-        vesw = it->value;
-        value = parseSenseValue(vesw); 
-        previous_expectation = parseSenseExpectation(vesw);
-        previous_ssd = parseSenseSSD(vesw);
+        sense = sense.fromJson(it->value);
+        value = sense.value;
+        previous_expectation = sense.expectation;
+        previous_ssd = sense.ssd;
 
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
             Logger.printf("No expectations yet for %s, seeding with current value %d\n", key, value);
             previous_expectation = value;
-            previous_ssd = 0;
+            previous_ssd = 10;
         }
 
         delta = value - previous_expectation;
         new_expectation = previous_expectation * prior_weight + value * posterior_weight; 
         delta2 = value - new_expectation;
-        new_ssd = old_ssd * prior_weight + delta*delta2 * posterior_weight;
+        new_ssd = previous_ssd * prior_weight + delta*delta2 * posterior_weight;
         
         Logger.printf("New expectation for %s is %d and new ssd is %d\n", key, new_expectation, new_ssd);
-        senses[key] = setSenseExpectationSSD(vesw, new_expectation, new_ssd);
+        senses[key] = sense.withExpectationSSD(new_expectation, new_ssd).toString();
     }
 }
 
@@ -647,7 +660,8 @@ void doActions(JsonObject& senses) {
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
     {
         const char* key = it->key;
-        if (parseSenseWrong(it->value)) {
+        Sense sense = Sense().fromJson(it->value);
+        if (sense.wrong) {
             Logger.printf("Ignoring sense [%s] because value is marked as wrong\n", key);
             continue;
         }
@@ -659,7 +673,7 @@ void doActions(JsonObject& senses) {
             Action action = actions[i];
             if (!strcmp(action.getSense(), key)) {
                 bool time_action = !strcmp(key, "time");
-                int value = parseSenseValue(it->value); 
+                int value = sense.value; 
                 if (value == WRONG_VALUE) {
                     Logger.printf("Could parse or wrong value [%d]\n", value);
                     continue;
@@ -753,16 +767,16 @@ bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObjec
     Logger.print("Humidity: ");
     Logger.println(humidity);
     String sense = buildSenseKey(dhtType, "t");
-    jsonObject[sense] = setSenseValue(jsonObject[sense], temp_c);
+    jsonObject[sense] = Sense().fromJson(jsonObject[sense]).withValue(temp_c).toString();
     sense = buildSenseKey(dhtType, "h");
-    jsonObject[sense] = setSenseValue(jsonObject[sense], humidity);
+    jsonObject[sense] = Sense().fromJson(jsonObject[sense]).withValue(humidity).toString();
     
     return true;
   }
 }
 
 String buildSenseKey(const char* sensor, const char* readingName) {
-    return String(sensor) + "-" + String(readingName;
+    return String(sensor) + "-" + String(readingName);
 }
 
 void loadConfig(char* string, bool from_server) {
@@ -938,7 +952,10 @@ void buildStateString(char* stateJson) {
   injectConfig(config);
   
   StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
-  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResult);
+  // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
+  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+  strcpy(readSensesResultCopy, readSensesResult);
+  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
   
   int actualLength = root.measureLength();
   if (actualLength >= MAX_STATE_JSON_LENGTH) {

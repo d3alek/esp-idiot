@@ -107,7 +107,7 @@ void OneWireSensors::readDS18x20(IdiotLogger Logger, OneWire& oneWire, byte* add
     }
     float celsius = (float)raw / 16.0;
 
-    jsonObject[String(device)] = setSenseValue(jsonObject[String(device)], celsius);
+    jsonObject[String(device)] = Sense().fromJson(jsonObject[String(device)]).withValue(celsius).toString();
     Logger.println(celsius);
 }
 

@@ -40,9 +40,9 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         float temperature = sensor.getTemperature() / (float) 10;
         Logger.println(temperature);
         String key_string = String(key)+"c";
-        jsonObject[key_string] = setSenseValue(jsonObject[key_string], capacitance);
+        jsonObject[key_string] = Sense().fromJson(jsonObject[key_string]).withValue(capacitance).toString();
         key_string = String(key) + "t";
-        jsonObject[key_string] = setSenseValue(jsonObject[key_string], temperature);
+        jsonObject[key_string] = Sense().fromJson(jsonObject[key_string]).withValue(temperature).toString();
     }
     else if (device == 60) {
         Logger.println("Ignoring I2C screen from senses");
@@ -121,20 +121,21 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         actual_one_count = count_ones(value);
         
         String key_string = String(key);
+        Sense sense = Sense().fromJson(jsonObject[key_string]).withValue(value);
         if (version_byte != EXPECTED_VERSION) {
             Logger.printf("Marking I2C read value as wrong because I2C device has wrong version. Expected %d got %d\n", EXPECTED_VERSION, version_byte);
-            jsonObject[key_string] = setSenseValueWrong(jsonObject[key_string], value, true);
+            jsonObject[key_string] = sense.withWrong(true).toString();
         }
         else if (actual_one_count != expected_one_count) {
             Logger.printf("Marking I2C read value as wrong because one-count check failed: expected %d, got %d\n", expected_one_count, actual_one_count);
-            jsonObject[key_string] = setSenseValueWrong(jsonObject[key_string], value, true);
+            jsonObject[key_string] = sense.withWrong(true).toString();
         }
         else if (error) {
             Logger.printf("Marking I2C read value as wrong because endTransmission returned error %d\n", error);
-            jsonObject[key_string] = setSenseValueWrong(jsonObject[key_string], value, true);
+            jsonObject[key_string] = sense.withWrong(true).toString();
         }
         else {
-            jsonObject[key_string] = setSenseValue(jsonObject[key_string], value);
+            jsonObject[key_string] = sense.toString();
         }
     }
   }
