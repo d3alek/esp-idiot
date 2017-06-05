@@ -566,6 +566,9 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
         wrong = false;
         key = it->key;
+        if (!strcmp(key, "time")) {
+            continue;
+        } 
         if (it->value.is<const char*>()) {
             const char* value_string = it->value; 
             if (strlen(value_string) > 0 && value_string[0] == 'w') {
