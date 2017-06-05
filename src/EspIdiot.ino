@@ -1,4 +1,4 @@
-#define VERSION "z16.991d"
+#define VERSION "z16.992d"
 
 #include <Arduino.h>
 
@@ -461,17 +461,8 @@ void loop(void)
     delay(2000);
 
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
-  // parseObject and printTo the same char array do not play well, so pass it a copy here
-  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
-  strcpy(readSensesResultCopy, readSensesResult);
-    JsonObject& senses = jsonBuffer.parseObject(readSensesResultCopy);
-    if (!senses.success()) {
-        Serial.println("Could not parse previous senses, clearing history and trying again...");
-        strcpy(readSensesResult, "{}");
-        return;
-    }
-
-    // TODO remove unseen senses in the next few lines from this map to avoid confusion that the device sees a sensor it does not
+    // parseObject and printTo the same char array do not play well, so pass it a copy here
+    JsonObject& senses = jsonBuffer.createObject();
 
     if (dht11Pin != -1) {
       DHT dht11(dht11Pin, DHT11);
@@ -502,16 +493,22 @@ void loop(void)
     IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
     int brightness = int(((1024 - analogRead(A0))*100) / 1024);
 
-    senses["A0"] = Sense().fromJson(senses["A0"]).withValue(brightness).toString();
+    senses["A0"] = brightness;
 
     if (boot_time != -1) {
-        senses["time"] = Sense().fromJson(senses["time"]).withValue(seconds_today()).toString();
+        senses["time"] = seconds_today();
     }
+
+    Serial.println("Enriching senses");
+    char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+    strcpy(readSensesResultCopy, readSensesResult);
+    enrichSenses(senses, readSensesResultCopy);
+
+    Serial.println("Updating expectations");
+    updateExpectations(senses);
 
     Serial.println("Validating senses");
     validate(senses);
-    Serial.println("Updating expectations");
-    updateExpectations(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
@@ -554,6 +551,36 @@ void loop(void)
   }
 }
 
+void enrichSenses(JsonObject& senses, char* previous_senses_string) {
+    // enrich senses with previous expectation, ssd, assume wrong if it starts with "w"
+    StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
+    JsonObject& previous_senses = jsonBuffer.parseObject(previous_senses_string);
+    if (!previous_senses.success()) {
+        Serial.println("Could not parse previous senses, assuming none");
+        return;
+    }
+
+    bool wrong;
+    const char* key;
+    int value;
+    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
+        wrong = false;
+        key = it->key;
+        if (it->value.is<const char*>()) {
+            const char* value_string = it->value; 
+            if (strlen(value_string) > 0 && value_string[0] == 'w') {
+                wrong = true;    
+            }
+            value = atoi(value_string+1);
+        }
+        else {
+            value = it->value;
+        }
+        
+        senses[key] = Sense().fromJson(previous_senses[key]).withValue(value).withWrong(wrong).toString();
+    }
+}
+
 bool meetsExpectations(Sense sense) {
     int value = sense.value;
     int expectation = sense.expectation;
@@ -573,7 +600,6 @@ void validate(JsonObject& senses) {
         Sense sense = Sense().fromJson(it->value);
         int value = sense.value;
         bool wrong = false;
-
         if (sense.wrong == WRONG_VALUE) {
 
             wrong = true;
@@ -622,6 +648,11 @@ void updateExpectations(JsonObject& senses) {
         value = sense.value;
         previous_expectation = sense.expectation;
         previous_ssd = sense.ssd;
+
+        if (sense.wrong) {
+            Logger.printf("Not updating expectations for %s because value marked as wrong", key);
+            continue;
+        }
 
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
             Logger.printf("No expectations yet for %s, seeding with current value %d\n", key, value);
@@ -767,9 +798,9 @@ bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObjec
     Logger.print("Humidity: ");
     Logger.println(humidity);
     String sense = buildSenseKey(dhtType, "t");
-    jsonObject[sense] = Sense().fromJson(jsonObject[sense]).withValue(temp_c).toString();
+    jsonObject[sense] = temp_c;
     sense = buildSenseKey(dhtType, "h");
-    jsonObject[sense] = Sense().fromJson(jsonObject[sense]).withValue(humidity).toString();
+    jsonObject[sense] = humidity;
     
     return true;
   }

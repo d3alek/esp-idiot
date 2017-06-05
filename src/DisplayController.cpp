@@ -61,30 +61,13 @@ void DisplayController::refresh(state_enum state, bool force) {
 void DisplayController::update(JsonObject& senses) {
     int counter = 0;
     for (JsonObject::iterator it = senses.begin(); it != senses.end(); ++it) {
-        displayables[counter++] = Displayable(it->key, parseFloat(it->value));
+        displayables[counter++] = Displayable(it->key, Sense().fromJson(it->value));
         if (counter >= MAX_DISPLAYABLES) {
             break;
         }
     }
     displayables_size = counter;
     changed = true;
-}
-
-float DisplayController::parseFloat(JsonVariant& valueObject) {
-    float value = -2;
-    if (valueObject.is<int>()) {
-        value = valueObject;
-    }
-    else if (valueObject.is<float>()) {
-        value = valueObject;
-    }
-    else if (valueObject.is<const char*>()) {
-        const char* valueString = valueObject;
-        if (valueString != NULL) {
-            value = atof(valueObject);
-        }
-    }
-    return value;
 }
 
 void DisplayController::changeMode() {

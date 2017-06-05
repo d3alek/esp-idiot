@@ -7,13 +7,13 @@ const char* Displayable::getString() {
 }
 
 // Assuming value is a number, saving 4 characters
-Displayable::Displayable(const char* key, float value) {
+Displayable::Displayable(const char* key, Sense sense) {
   int maxKeyLength = 8;
   char truncatedKey[10];
   strcpy(truncatedKey, "");
   strncat(truncatedKey, key, maxKeyLength);
   strcat(truncatedKey, "\0");
-  sprintf(_string, "%s: %s", truncatedKey, String(value, 1).c_str());
+  sprintf(_string, "%s: %s", truncatedKey, String(sense.value).c_str());
 }
 
 Displayable::Displayable() {

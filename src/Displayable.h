@@ -1,10 +1,12 @@
 #ifndef DISPLAYABLE_H
 #define DISPLAYABLE_H 
 
+#include <Sense.h>
+
 class Displayable {
   public:
     Displayable();
-    Displayable(const char*, float);
+    Displayable(const char*, Sense);
     
     const char* getString();
   private:
