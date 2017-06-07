@@ -302,7 +302,7 @@ OLED::OLED() {
 
 void OLED::begin(void) {
 	// set up i2c
-	Wire.begin(_sda, _scl);
+	// Wire.begin(_sda, _scl); leave EspIdiot to call this
 	init_OLED();
 	reset_display();
 }

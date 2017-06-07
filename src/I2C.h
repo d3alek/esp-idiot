@@ -9,7 +9,7 @@
 #include "I2CSoilMoistureSensor.h"
 
 #define MAX_DEVICES 10
-#define EXPECTED_VERSION 2
+#define MINIMUM_VERSION 2
 
 class I2C {
   public:
@@ -18,6 +18,9 @@ class I2C {
     int devices[MAX_DEVICES];
     int devices_size;
     void scan(IdiotLogger);
+    int get_expected_one_count(int, byte);
+    int get_value(int, byte);
+    int binary_subset(int, int, int);
 };
 
 

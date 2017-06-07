@@ -1,4 +1,4 @@
-#define VERSION "z16.992d"
+#define VERSION "z17"
 
 #include <Arduino.h>
 
@@ -257,6 +257,11 @@ void setup(void)
     Logger.printf("Used bytes: %d Total bytes: %d\n", fsInfo.usedBytes, fsInfo.totalBytes);
 
     PersistentStore.begin();
+
+    Wire.pins(I2C_PIN_1, I2C_PIN_2);
+    Wire.begin();
+    Wire.setClockStretchLimit(2000); // in µs
+
 
     WiFi.mode(WIFI_STA);
 
@@ -557,7 +562,6 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
     JsonObject& previous_senses = jsonBuffer.parseObject(previous_senses_string);
     if (!previous_senses.success()) {
         Serial.println("Could not parse previous senses, assuming none");
-        return;
     }
 
     bool wrong;
@@ -568,7 +572,7 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
         key = it->key;
         if (!strcmp(key, "time")) {
             continue;
-        } 
+        }
         if (it->value.is<const char*>()) {
             const char* value_string = it->value; 
             if (strlen(value_string) > 0 && value_string[0] == 'w') {
@@ -579,7 +583,6 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
         else {
             value = it->value;
         }
-        
         senses[key] = Sense().fromJson(previous_senses[key]).withValue(value).withWrong(wrong).toString();
     }
 }
@@ -587,9 +590,13 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
 bool meetsExpectations(Sense sense) {
     int value = sense.value;
     int expectation = sense.expectation;
+    if (expectation == WRONG_VALUE || sense.ssd == WRONG_VALUE) {
+        return true;
+    }
     
     float variance = sense.ssd / float(SENSE_EXPECTATIONS_WINDOW-1);
-    if (expectation - variance <= value && value <= expectation + variance) {
+    Logger.printf("Meets expectation check: %d <= %d <= %d\n", int(expectation - 2*variance), value, int(expectation + 2*variance));
+    if (expectation - 2*variance <= value && value <= expectation + 2*variance) {
         return true;
     }
     else {
@@ -603,7 +610,13 @@ void validate(JsonObject& senses) {
         Sense sense = Sense().fromJson(it->value);
         int value = sense.value;
         bool wrong = false;
-        if (sense.wrong == WRONG_VALUE) {
+        if (!strcmp(key, "time")) {
+            continue;
+        }
+        if (sense.wrong) {
+            continue;
+        }
+        if (sense.value == WRONG_VALUE) {
 
             wrong = true;
         } 
@@ -627,7 +640,8 @@ void validate(JsonObject& senses) {
                 wrong = true;
             }
         }
-        else if (!meetsExpectations(sense)) {
+
+        if (!wrong && !meetsExpectations(sense)) {
             wrong = true;
         }
         
@@ -645,30 +659,38 @@ void updateExpectations(JsonObject& senses) {
     Sense sense;
     float prior_weight = float(SENSE_EXPECTATIONS_WINDOW-1)/SENSE_EXPECTATIONS_WINDOW;
     float posterior_weight = 1./SENSE_EXPECTATIONS_WINDOW;
+    float ssd_update;
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
         key = it->key;
+        if (!strcmp(key, "time")) {
+            continue;
+        }
         sense = sense.fromJson(it->value);
         value = sense.value;
         previous_expectation = sense.expectation;
         previous_ssd = sense.ssd;
 
         if (sense.wrong) {
-            Logger.printf("Not updating expectations for %s because value marked as wrong", key);
+            Logger.printf("Not updating expectations for %s because value marked as wrong\n", key);
             continue;
         }
 
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
             Logger.printf("No expectations yet for %s, seeding with current value %d\n", key, value);
             previous_expectation = value;
-            previous_ssd = 10;
+            previous_ssd = 5 * SENSE_EXPECTATIONS_WINDOW; // variance is at least 5 
         }
 
         delta = value - previous_expectation;
-        new_expectation = previous_expectation * prior_weight + value * posterior_weight; 
+        new_expectation = previous_expectation * prior_weight + value * posterior_weight + 1; // adding 1 because of integer rounding
         delta2 = value - new_expectation;
-        new_ssd = previous_ssd * prior_weight + delta*delta2 * posterior_weight;
+        ssd_update = delta*delta2 * posterior_weight;
+        if (ssd_update < 1) {
+            ssd_update = 1; // always overestimate variance instead of underestimating it due to integer rounding
+        }
+        new_ssd = previous_ssd * prior_weight + ssd_update;
         
-        Logger.printf("New expectation for %s is %d and new ssd is %d\n", key, new_expectation, new_ssd);
+        Logger.printf("For %s expectation: %d->%d ; ssd %d->%d\n", key, previous_expectation, new_expectation, previous_ssd, new_ssd);
         senses[key] = sense.withExpectationSSD(new_expectation, new_ssd).toString();
     }
 }

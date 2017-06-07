@@ -4,7 +4,7 @@
 
 int count_ones(int value) {
     int count = 0;
-    int mask = 1 << 11;
+    int mask = 1 << 10;
     while (mask > 0) {
         count += (value & mask) > 0;
         mask >>= 1;
@@ -14,10 +14,7 @@ int count_ones(int value) {
 }
 
 void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
-  Wire.pins(i2cPin1, i2cPin2);
-  Wire.begin();
-  Wire.setClockStretchLimit(2000); // in µs
-
+  
   scan(Logger);
 
   int available, error, value, expected_one_count, actual_one_count;
@@ -115,14 +112,16 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
 
         value = word(high_byte, low_byte);
 
-        expected_one_count = value >> 12;
-        value = value & ((1 << 12) - 1);
+        expected_one_count = get_expected_one_count(value, version_byte);
+        Logger.printf("Raw value %d, expected one count %d, actual %d\n", value, expected_one_count, count_ones(get_value(value, version_byte)));
+
+        value = get_value(value, version_byte); 
 
         actual_one_count = count_ones(value);
         
         String key_string = String(key);
-        if (version_byte != EXPECTED_VERSION) {
-            Logger.printf("Marking I2C read value as wrong because I2C device has wrong version. Expected %d got %d\n", EXPECTED_VERSION, version_byte);
+        if (version_byte < MINIMUM_VERSION) {
+            Logger.printf("Marking I2C read value as wrong because I2C device has old version. Expected at least %d got %d\n", MINIMUM_VERSION, version_byte);
             jsonObject[key_string] = String("w") + value;
         }
         else if (actual_one_count != expected_one_count) {
@@ -138,6 +137,31 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         }
     }
   }
+}
+
+/*
+ * In newer analog-to-I2C versions, moving the bit-count lower down the significant bits because the most significant bits get corrupted most often
+ */
+int I2C::get_expected_one_count(int value, byte version) {
+    switch (version) {
+        case 2:
+            return binary_subset(value, 12, 15);
+        case 3:
+            return binary_subset(value, 11, 15);
+    }
+}
+
+int I2C::get_value(int value, byte version) {
+    switch (version) {
+        case 2:
+            return binary_subset(value, 0, 11);
+        case 3:
+            return binary_subset(value, 0, 10);
+    }
+}
+
+int I2C::binary_subset(int value, int from_lower, int to_lower) {
+    return (value >> from_lower) & ((1 << (to_lower-from_lower + 1)) - 1);
 }
 
 
