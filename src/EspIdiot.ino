@@ -716,7 +716,14 @@ void doActions(JsonObject& senses) {
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
     {
         const char* key = it->key;
-        Sense sense = Sense().fromJson(it->value);
+        Sense sense;
+        if (!strcmp(key, "time")) {
+            sense = sense.withValue(it->value).withWrong(false); // time sense, if present, is never wrong
+        }  
+        else {
+            sense = sense.fromJson(it->value);
+        }
+
         if (sense.wrong) {
             Logger.printf("Ignoring sense [%s] because value is marked as wrong\n", key);
             continue;

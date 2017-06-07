@@ -63,7 +63,12 @@ void DisplayController::refresh(state_enum state, bool force) {
 
 void DisplayController::update(JsonObject& senses) {
     int counter = 0;
+    const char* key;
     for (JsonObject::iterator it = senses.begin(); it != senses.end(); ++it) {
+        key = it->key;
+        if (!strcmp(key, "time")) {
+            continue;
+        }
         displayables[counter++] = Displayable(it->key, Sense().fromJson(it->value));
         if (counter >= MAX_DISPLAYABLES) {
             break;
