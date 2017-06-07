@@ -8,6 +8,9 @@ DisplayController::DisplayController(OLED oled) {
     mode = 0;
     changed = true;
 
+}
+
+void DisplayController::begin() {
     oled.begin();
     oled.on();
 }

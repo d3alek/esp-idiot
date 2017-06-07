@@ -261,7 +261,7 @@ void setup(void)
     Wire.pins(I2C_PIN_1, I2C_PIN_2);
     Wire.begin();
     Wire.setClockStretchLimit(2000); // in µs
-
+    display.begin();
 
     WiFi.mode(WIFI_STA);
 
@@ -509,11 +509,11 @@ void loop(void)
     strcpy(readSensesResultCopy, readSensesResult);
     enrichSenses(senses, readSensesResultCopy);
 
-    Serial.println("Updating expectations");
-    updateExpectations(senses);
-
     Serial.println("Validating senses");
     validate(senses);
+
+    Serial.println("Updating expectations");
+    updateExpectations(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
     Logger.printf("readSensesResult: %s\n", readSensesResult);
@@ -594,7 +594,7 @@ bool meetsExpectations(Sense sense) {
         return true;
     }
     
-    float variance = sense.ssd / float(SENSE_EXPECTATIONS_WINDOW-1);
+    float variance = sqrt(sense.ssd / float(SENSE_EXPECTATIONS_WINDOW-1));
     Logger.printf("Meets expectation check: %d <= %d <= %d\n", int(expectation - 2*variance), value, int(expectation + 2*variance));
     if (expectation - 2*variance <= value && value <= expectation + 2*variance) {
         return true;
@@ -607,15 +607,17 @@ bool meetsExpectations(Sense sense) {
 void validate(JsonObject& senses) {
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
         const char* key = it->key;
-        Sense sense = Sense().fromJson(it->value);
-        int value = sense.value;
-        bool wrong = false;
         if (!strcmp(key, "time")) {
             continue;
         }
+        Sense sense = Sense().fromJson(it->value);
+        int value = sense.value;
         if (sense.wrong) {
             continue;
         }
+
+        bool wrong = false;
+
         if (sense.value == WRONG_VALUE) {
 
             wrong = true;
@@ -670,19 +672,17 @@ void updateExpectations(JsonObject& senses) {
         previous_expectation = sense.expectation;
         previous_ssd = sense.ssd;
 
-        if (sense.wrong) {
-            Logger.printf("Not updating expectations for %s because value marked as wrong\n", key);
-            continue;
-        }
-
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
             Logger.printf("No expectations yet for %s, seeding with current value %d\n", key, value);
             previous_expectation = value;
-            previous_ssd = 5 * SENSE_EXPECTATIONS_WINDOW; // variance is at least 5 
+            previous_ssd = 5 * 5 * SENSE_EXPECTATIONS_WINDOW * SENSE_EXPECTATIONS_WINDOW; // variance is at least 5^2 
         }
 
         delta = value - previous_expectation;
-        new_expectation = previous_expectation * prior_weight + value * posterior_weight + 1; // adding 1 because of integer rounding
+        new_expectation = previous_expectation * prior_weight + value * posterior_weight; 
+        if (new_expectation < value) {
+            new_expectation += 1; // adding 1 because of integer rounding
+        }
         delta2 = value - new_expectation;
         ssd_update = delta*delta2 * posterior_weight;
         if (ssd_update < 1) {

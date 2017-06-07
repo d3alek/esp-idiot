@@ -14,6 +14,7 @@ class DisplayController {
         static float parseFloat(JsonVariant& valueObject);
 
         DisplayController(OLED);
+        void begin();
         void refresh(state_enum);
         void refresh(state_enum, bool);
         void update(JsonObject&);

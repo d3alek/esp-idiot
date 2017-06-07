@@ -113,7 +113,6 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         value = word(high_byte, low_byte);
 
         expected_one_count = get_expected_one_count(value, version_byte);
-        Logger.printf("Raw value %d, expected one count %d, actual %d\n", value, expected_one_count, count_ones(get_value(value, version_byte)));
 
         value = get_value(value, version_byte); 
 
@@ -122,10 +121,6 @@ void I2C::readI2C(IdiotLogger Logger, int i2cPin1, int i2cPin2, JsonObject& json
         String key_string = String(key);
         if (version_byte < MINIMUM_VERSION) {
             Logger.printf("Marking I2C read value as wrong because I2C device has old version. Expected at least %d got %d\n", MINIMUM_VERSION, version_byte);
-            jsonObject[key_string] = String("w") + value;
-        }
-        else if (actual_one_count != expected_one_count) {
-            Logger.printf("Marking I2C read value as wrong because one-count check failed: expected %d, got %d\n", expected_one_count, actual_one_count);
             jsonObject[key_string] = String("w") + value;
         }
         else if (error) {

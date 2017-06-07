@@ -73,7 +73,7 @@ int append_one_count(int sample) {
         one_count += ((sample & mask) > 0);
         mask >>= 1;
     }
-    return sample | (one_count << 11);
+    return (one_count << 11) | sample;
 }
 
 void collect_sample() {
