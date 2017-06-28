@@ -1,4 +1,4 @@
-#define VERSION "z17"
+#define VERSION "z17.5"
 
 #include <Arduino.h>
 
@@ -738,7 +738,9 @@ void doActions(JsonObject& senses) {
                 bool time_action = !strcmp(key, "time");
                 int value = sense.value; 
                 if (value == WRONG_VALUE) {
-                    Logger.printf("Could parse or wrong value [%d]\n", value);
+                    Logger.printf("Could not parse or wrong value [%d]\n", value);
+                    Logger.println("Preserving GPIO state");
+                    GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
                     continue;
                 }
                 bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
