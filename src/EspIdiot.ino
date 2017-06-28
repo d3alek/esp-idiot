@@ -1,4 +1,4 @@
-#define VERSION "z17.5"
+#define VERSION "z17.6"
 
 #include <Arduino.h>
 
@@ -724,10 +724,7 @@ void doActions(JsonObject& senses) {
             sense = sense.fromJson(it->value);
         }
 
-        if (sense.wrong) {
-            Logger.printf("Ignoring sense [%s] because value is marked as wrong\n", key);
-            continue;
-        }
+
 
         for (i = 0; i < actionsSize; ++i) {
             if (!autoAction[i]) {
@@ -739,12 +736,15 @@ void doActions(JsonObject& senses) {
                 int value = sense.value; 
                 if (value == WRONG_VALUE) {
                     Logger.printf("Could not parse or wrong value [%d]\n", value);
+                }
+                Logger.printf("Found sense for the action with value [%d]\n", value);
+                if (sense.wrong) {
+                    Logger.printf("Ignoring sense [%s] because value is marked as wrong\n", key);
                     Logger.println("Preserving GPIO state");
                     GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
                     continue;
                 }
                 bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
-                Logger.printf("Found sense for the action with value [%d]\n", value);
                 if (time_action) {
                     if (value >= action.getThreshold() && value <= action.getThreshold() + action.getDelta()) {
                         Logger.println("Time is within action period. GPIO should be ");
