@@ -46,7 +46,7 @@ def log_serial():
 def continuously_upload_log():
     logger = logging.getLogger('continuously_upload_log')
     logger.info("Starting upload...")
-    subprocess.call(["rsync", "-az", "--rsh=ssh -p8902 -i /home/alek/.ssh/otselo_id_rsa", DIR + 'logs/', "otselo@otselo.eu:/www/zelenik/db/esp_logger"])
+    subprocess.call(["rsync", "-az", "--rsh=ssh -p8902 -i " + DIR + "otselo_id_rsa", DIR + 'logs/', "otselo@otselo.eu:/www/zelenik/db/esp_logger"])
     logger.info("Finished upload")
     t = Timer(30, continuously_upload_log)
     t.start()
