@@ -24,6 +24,7 @@ def log_serial():
     logger = logging.getLogger('log_serial')
     if len(logger.handlers) == 0:
         handler = TimedRotatingFileHandler(DIR + 'logs/esp_logger.txt', when='midnight', interval=1, utc=True)
+        handler.setFormatter(logging.Formatter("%(asctime)-15s:%(message)s"))
         logger.addHandler(handler)
     
     logger.info("Starting to read serial...")
@@ -34,9 +35,11 @@ def log_serial():
             bytes = ser.read(bytesToRead)
             print(bytes, end='')
             message += bytes
-            if len(message) > 0 and message[-1] == '\n':
-                logger.info(message)
-                message = ''
+            split = message.split('\n')
+            if len(message) > 0 and len(split) > 1:
+                for line in split[:-1]:
+                    logger.info(line)
+                message = split[-1]
 
             time.sleep(0.5)
     finally: 
