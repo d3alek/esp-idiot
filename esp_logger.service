@@ -1,0 +1,11 @@
+[Unit]
+Description=Esp Logger (zelenik)
+After=syslog.target
+
+[Service]
+Restart=always
+ExecStart=/idiot/esp-idiot/esp_logger.py
+StandardError=syslog
+
+[Install]
+WantedBy=multi-user.target
