@@ -3,6 +3,9 @@
 # then install virtualenv (use sudo to install globally)
 pip install virtualenv
 
+sudo mkdir /idiot
+sudo chown $USER /idiot
+cd /idiot
 # recursive to pick up submodule
 git clone --recursive https://github.com/d3alek/esp-idiot
 
@@ -10,7 +13,7 @@ git clone --recursive https://github.com/d3alek/esp-idiot
 scp <MQTTConfig.h-from-host-that-has-it> esp-idiot/src
 
 cd esp-idiot
-virtualenv venv
+virtualenv venv # here make sure venv is setup with python2
 source venv/bin/activate
 pip install -r requirements.txt 
 
