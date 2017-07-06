@@ -105,6 +105,7 @@ def continuously_upload_log():
         act_like_a_thing()
         
         logger.info("Starting upload...")
+        logger.info(" ".join(["rsync", "-az", "--rsh=ssh -p8902 -i " + DIR + "otselo_id_rsa", DIR + 'logs/', "otselo@otselo.eu:/www/zelenik/db/esp_logger"]))
         subprocess.call(["rsync", "-az", "--rsh=ssh -p8902 -i " + DIR + "otselo_id_rsa", DIR + 'logs/', "otselo@otselo.eu:/www/zelenik/db/esp_logger"])
         logger.info("Finished upload")
     except Exception, e:
