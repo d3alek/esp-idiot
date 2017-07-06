@@ -4,8 +4,9 @@ After=syslog.target
 
 [Service]
 Restart=always
-ExecStart=/idiot/esp-idiot/esp_logger.py
+ExecStart=/idiot/esp-idiot/esp_logger/esp_logger.py
 StandardError=syslog
+User=otselo
 
 [Install]
 WantedBy=multi-user.target
