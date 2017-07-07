@@ -5,7 +5,6 @@
 
 #include <ArduinoJson.h>
 #include "Wire.h"
-#include "IdiotLogger.h"
 #include "I2CSoilMoistureSensor.h"
 
 #define MAX_DEVICES 10
@@ -13,11 +12,11 @@
 
 class I2C {
   public:
-    void readI2C(IdiotLogger, int, int, JsonObject&); 
+    void readI2C(int, int, JsonObject&); 
   private:
     int devices[MAX_DEVICES];
     int devices_size;
-    void scan(IdiotLogger);
+    void scan();
     int get_expected_one_count(int, byte);
     int get_value(int, byte);
     int binary_subset(int, int, int);

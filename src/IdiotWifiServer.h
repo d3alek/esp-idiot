@@ -1,7 +1,6 @@
 #ifndef IDIOT_WIFI_SERVER_H
 #define IDIOT_WIFI_SERVER_H
 
-#include "IdiotLogger.h"
 #include "EspControl.h"
 
 // these must be included in .ino file because http://stackoverflow.com/a/6506611/5799810
@@ -13,17 +12,14 @@
 
 class IdiotWifiServer {
     public:
-        void start(const char*, const char*, IdiotLogger);
+        void start(const char*);
         void handleClient();
     private:
       
       friend void handleRoot();
-      friend void format();
       friend void handleWifiCredentialsEntered();
       friend void httpUpdateGet();
       friend void httpUpdateAnswer();
       friend void httpUpdateDo();
-      friend void serveLogs();
-      friend void serveLocalPublish();
 };
 #endif

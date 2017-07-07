@@ -99,7 +99,7 @@ void Action::buildActionString(char* action_string) {
     sprintf(action_string, "%s|%d|%s|%d|%d", _sense, _gpio, _aboveThresholdGpioState ? "H":"L", _threshold, _delta);
 }
 
-void Action::printTo(IdiotLogger logger) {
-  logger.printf("%s[t:%d,d:%d,g:%d-%d]\n",_sense,_threshold,_delta, _gpio, _aboveThresholdGpioState);
+void Action::print() {
+  Serial.printf("%s[t:%d,d:%d,g:%d-%d]\n",_sense,_threshold,_delta, _gpio, _aboveThresholdGpioState);
 }
 

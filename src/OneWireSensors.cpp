@@ -1,6 +1,6 @@
 #include "OneWireSensors.h"
 
-void OneWireSensors::readOneWire(IdiotLogger Logger, int oneWirePin, JsonObject& jsonObject) {
+void OneWireSensors::readOneWire(int oneWirePin, JsonObject& jsonObject) {
     OneWire oneWire(oneWirePin);
     int devicesFound = 0;
     byte addr[8];
@@ -9,13 +9,13 @@ void OneWireSensors::readOneWire(IdiotLogger Logger, int oneWirePin, JsonObject&
 
     while (true) {
         if ( !oneWire.search(addr)) {
-            Logger.print("No more addresses.\n");
+            Serial.print("No more addresses.\n");
             break;
         }
         devicesFound++;
 
         if ( OneWire::crc8( addr, 7) != addr[7]) {
-            Logger.print("CRC is not valid!\n");
+            Serial.print("CRC is not valid!\n");
             return;
         }
 
@@ -24,28 +24,28 @@ void OneWireSensors::readOneWire(IdiotLogger Logger, int oneWirePin, JsonObject&
         char device[25];
         strcpy(device, "OW-");
         strcat(device, deviceAddr);
-        Logger.print("addr: ");
-        Logger.print(device);
+        Serial.print("addr: ");
+        Serial.print(device);
         if ( addr[0] == 0x10) {
-            Logger.println(" DS18S20 family device");
-            readDS18x20(Logger, oneWire, addr, device, jsonObject);
+            Serial.println(" DS18S20 family device");
+            readDS18x20(oneWire, addr, device, jsonObject);
         }
         else if ( addr[0] == 0x28) {
-            Logger.println(" DS18B20 family device.");
-            readDS18x20(Logger, oneWire, addr, device, jsonObject);
+            Serial.println(" DS18B20 family device.");
+            readDS18x20(oneWire, addr, device, jsonObject);
         }
         else {
-            Logger.print(" Device family not recognized: 0x");
+            Serial.print(" Device family not recognized: 0x");
             continue;
         }
     }
-    Logger.print("OneWire devices found: ");
-    Logger.println(devicesFound);
+    Serial.print("OneWire devices found: ");
+    Serial.println(devicesFound);
 }
 
 // code from 
 // https://github.com/PaulStoffregen/OneWire/blob/master/examples/DS18x20_Temperature/DS18x20_Temperature.pde
-void OneWireSensors::readDS18x20(IdiotLogger Logger, OneWire& oneWire, byte* addr, char* device, JsonObject& jsonObject) {
+void OneWireSensors::readDS18x20(OneWire& oneWire, byte* addr, char* device, JsonObject& jsonObject) {
 
     byte type_s;
     if (addr[0] == 0x10) {
@@ -55,7 +55,7 @@ void OneWireSensors::readDS18x20(IdiotLogger Logger, OneWire& oneWire, byte* add
         type_s = 0;
     }
     else {
-        Logger.println("Sensor addr not recongized as DS18x20.");
+        Serial.println("Sensor addr not recongized as DS18x20.");
         return;
     }
 
@@ -74,17 +74,17 @@ void OneWireSensors::readDS18x20(IdiotLogger Logger, OneWire& oneWire, byte* add
     oneWire.select(addr);    
     oneWire.write(0xBE);         // Read Scratchpad
 
-    Logger.print("P=");
-    Logger.print(present,HEX);
-    Logger.print(" ");
+    Serial.print("P=");
+    Serial.print(present,HEX);
+    Serial.print(" ");
     for ( i = 0; i < 9; i++) {           // we need 9 bytes
         data[i] = oneWire.read();
-        Logger.print(data[i], HEX);
-        Logger.print(" ");
+        Serial.print(data[i], HEX);
+        Serial.print(" ");
     }
-    Logger.print(" CRC=");
-    Logger.print( OneWire::crc8( data, 8), HEX);
-    Logger.println();
+    Serial.print(" CRC=");
+    Serial.print( OneWire::crc8( data, 8), HEX);
+    Serial.println();
 
     // Convert the data to actual temperature
     // because the result is a 16 bit signed integer, it should
@@ -108,7 +108,7 @@ void OneWireSensors::readDS18x20(IdiotLogger Logger, OneWire& oneWire, byte* add
     float celsius = (float)raw / 16.0;
 
     jsonObject[String(device)] = celsius;
-    Logger.println(celsius);
+    Serial.println(celsius);
 }
 
 // buffer must be at least 17 long, bytes are assumed to be 8

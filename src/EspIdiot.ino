@@ -1,4 +1,4 @@
-#define VERSION "z17.7"
+#define VERSION "z17.8.1"
 
 #include <Arduino.h>
 
@@ -16,10 +16,6 @@
 #include "EspPersistentStore.h"
 
 #include <ArduinoJson.h>
-
-#include "IdiotLogger.h"
-
-#include "SizeLimitedFileAppender.h"
 
 #include <OneWire.h>
 #include "OneWireSensors.h"
@@ -59,13 +55,11 @@
 #define I2C_PIN_2 12 // SDC
 
 #define HARD_RESET_PIN 0
-#define LOCAL_PUBLISH_FILE "localPublish.txt"
 
 #define MAX_STATE_JSON_LENGTH 740
 
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
 #define MAX_WIFI_CONNECTED_ATTEMPTS 3
-#define MAX_LOCAL_PUBLISH_FILE_BYTES 150000 // 150kb
 #define MAX_READ_SENSES_RESULT_SIZE 512
 #define DELTA_WAIT_SECONDS 2
 #define DEFAULT_PUBLISH_INTERVAL 60
@@ -92,7 +86,6 @@ int wifiConnectAttempts = 0;
 
 state_enum state = boot;
 
-IdiotLogger Logger(false);
 IdiotWifiServer idiotWifiServer;
 
 int dht11Pin = -1;
@@ -126,7 +119,7 @@ void ICACHE_RAM_ATTR osWatch(void) {
   unsigned long t = millis();
   unsigned long last_run = abs(t - last_loop);
   if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
-    Logger.println("osWatch: reset");
+    Serial.println("osWatch: reset");
     ESP.reset();  // hard reset
   }
 }
@@ -135,7 +128,7 @@ void toState(state_enum newState) {
   if (state == newState) {
     return;
   }
-  Logger.printf("\n[%s] -> [%s]\n", STATE_STRING[state], STATE_STRING[newState]);
+  Serial.printf("\n[%s] -> [%s]\n", STATE_STRING[state], STATE_STRING[newState]);
 
   state = newState;
 }
@@ -149,22 +142,22 @@ void updateFromS3(char* updatePath) {
   char updateUrl[100];
   strcpy(updateUrl, UPDATE_URL);
   strcat(updateUrl, updatePath);
-  Logger.print("Starting OTA update: ");
-  Logger.println(updateUrl);
+  Serial.print("Starting OTA update: ");
+  Serial.println(updateUrl);
   t_httpUpdate_return ret = ESPhttpUpdate.update(updateUrl);
 
-  Logger.printf("OTA update finished: %d\n", ret);
+  Serial.printf("OTA update finished: %d\n", ret);
   switch(ret) {
       case HTTP_UPDATE_FAILED:
-          Logger.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+          Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
           break;
 
       case HTTP_UPDATE_NO_UPDATES:
-          Logger.println("HTTP_UPDATE_NO_UPDATES");
+          Serial.println("HTTP_UPDATE_NO_UPDATES");
           break;
 
       case HTTP_UPDATE_OK:
-          Logger.println("HTTP_UPDATE_OK");
+          Serial.println("HTTP_UPDATE_OK");
           break;
   }
   
@@ -172,15 +165,15 @@ void updateFromS3(char* updatePath) {
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  Logger.print("Message arrived [");
-  Logger.print(topic);
-  Logger.print("] ");
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
   char normalizedPayload[length+1];
   for (int i=0;i<length;i++) {
     normalizedPayload[i] = (char)payload[i];
   }
   normalizedPayload[length]='\0';
-  Logger.println(normalizedPayload);
+  Serial.println(normalizedPayload);
   loadConfig(normalizedPayload, true);
 }
 
@@ -192,10 +185,10 @@ void constructTopicName(char* topic, const char* topicPrefix) {
 }
 
 bool mqttConnect() {
-  Logger.print("MQTT ");
+  Serial.print("MQTT ");
   mqttClient.setServer(mqttHostname, mqttPort).setCallback(mqttCallback);
   if (mqttClient.connect(uuid, mqttUser, mqttPassword)) {
-    Logger.println("OK");
+    Serial.println("OK");
     constructTopicName(updateTopic, "update/");
     char deltaTopic[30];
     constructTopicName(deltaTopic, "things/");
@@ -205,20 +198,19 @@ bool mqttConnect() {
     strcat(updateResultTopic,"/result");
     
     mqttClient.subscribe(updateTopic);
-    Logger.println(updateTopic);
+    Serial.println(updateTopic);
     mqttClient.subscribe(deltaTopic);
-    Logger.println(deltaTopic);
+    Serial.println(deltaTopic);
     return true;
   }
-  Logger.print("failed, rc=");
-  Logger.println(mqttClient.state());
+  Serial.print("failed, rc=");
+  Serial.println(mqttClient.state());
   return false;
 }
 
 void hardReset() {
     toState(hard_reset);
 
-    SPIFFS.format();
     ESP.eraseConfig();
 
     PersistentStore.clear();
@@ -233,16 +225,12 @@ void setup(void)
     Serial.begin(115200);
     Serial.setDebugOutput(true);
     Serial.println();
-    SPIFFS.begin();
 
     if (ESP.getResetReason().equals("Hardware Watchdog")) {
         Serial.println("Clearing state because Hardware Watchdog reset detected.");
-        SPIFFS.format();
         ESP.eraseConfig();
         ESP.reset();
     }
-
-    Logger.begin();
 
     Serial.println(ESP.getResetReason());
     Serial.println(ESP.getResetInfo());
@@ -250,11 +238,7 @@ void setup(void)
     Serial.println("Setup starting");
 
     sprintf(uuid, "%s-%d", uuidPrefix, chipId);
-    Logger.printf("UUID: %s VERSION: %s\n", uuid, VERSION);
-    FSInfo fsInfo;
-    SPIFFS.info(fsInfo);
-
-    Logger.printf("Used bytes: %d Total bytes: %d\n", fsInfo.usedBytes, fsInfo.totalBytes);
+    Serial.printf("UUID: %s VERSION: %s\n", uuid, VERSION);
 
     PersistentStore.begin();
 
@@ -283,9 +267,9 @@ volatile unsigned long lastInterruptTime = 0;
 volatile unsigned long debounceDelay = 300; 
 
 void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
-    Logger.println("interrupt");
+    Serial.println("interrupt");
     if (millis() - lastInterruptTime > debounceDelay) {
-        Logger.println("change mode");
+        Serial.println("change mode");
         display.changeMode();
         lastInterruptTime = millis();
     }
@@ -335,11 +319,11 @@ void loop(void)
     if (serveLocallyStartMs == 0) {
       WiFi.disconnect();
       WiFi.mode(WIFI_AP);
-      idiotWifiServer.start(uuid, LOCAL_PUBLISH_FILE, Logger);
+      idiotWifiServer.start(uuid);
       serveLocallyStartMs = millis();
-      Logger.print("Serving locally for ");
-      Logger.print(serveLocallySeconds);
-      Logger.println(" seconds");
+      Serial.print("Serving locally for ");
+      Serial.print(serveLocallySeconds);
+      Serial.println(" seconds");
     }
     else if (millis() - serveLocallyStartMs > serveLocallySeconds * 1000) {
       toState(cool_off);
@@ -352,10 +336,10 @@ void loop(void)
   else if (state == connect_to_wifi) {
     char wifiName[WIFI_NAME_MAX_SIZE];
     PersistentStore.readWifiName(wifiName);
-    Logger.println(wifiName);
+    Serial.println(wifiName);
     char wifiPassword[WIFI_PASS_MAX_SIZE];
     PersistentStore.readWifiPassword(wifiPassword);
-    Logger.println(wifiPassword);
+    Serial.println(wifiPassword);
 
     if (strlen(wifiPassword) == 0) {
       WiFi.begin(wifiName);
@@ -381,43 +365,43 @@ void loop(void)
   else if (state == connect_to_internet) {
     const char* googleGenerate204 = "http://clients3.google.com/generate_204";
     HTTPClient http;
-    Logger.print("[HTTP] Testing for redirection using ");
-    Logger.println(googleGenerate204);
+    Serial.print("[HTTP] Testing for redirection using ");
+    Serial.println(googleGenerate204);
     http.begin(googleGenerate204);
     int httpCode = http.GET();
 
     if (httpCode != 204) {
-      Logger.print("[HTTP] Redirection detected. GET code: ");
-      Logger.println(httpCode);
+      Serial.print("[HTTP] Redirection detected. GET code: ");
+      Serial.println(httpCode);
 
       String payload = http.getString();
-      Logger.println(payload);
+      Serial.println(payload);
 
-      Logger.println("[HTTP] Trying to get past it...");
+      Serial.println("[HTTP] Trying to get past it...");
       http.begin("http://1.1.1.1/login.html");
       http.addHeader("Content-Type", "application/x-www-form-urlencoded");
       httpCode = http.POST(String("username=guest&password=guest&buttonClicked=4"));
 
-      Logger.print("[HTTP] POST code: ");
-      Logger.println(httpCode);
-      Logger.println(http.getString());
+      Serial.print("[HTTP] POST code: ");
+      Serial.println(httpCode);
+      Serial.println(http.getString());
 
-      Logger.println("[HTTP] Testing for redirection again");
+      Serial.println("[HTTP] Testing for redirection again");
       http.begin(googleGenerate204);
       httpCode = http.GET();
       if (httpCode != 204) {
-        Logger.print("[HTTP] Redirection detected. GET code: ");
-        Logger.println(httpCode);
-        Logger.println("[HTTP] Could not connect to the internet - stuck behind a login page.");
+        Serial.print("[HTTP] Redirection detected. GET code: ");
+        Serial.println(httpCode);
+        Serial.println("[HTTP] Could not connect to the internet - stuck behind a login page.");
         toState(load_config);
       }
       else {
-        Logger.println("[HTTP] Successfully passed the login page.");
+        Serial.println("[HTTP] Successfully passed the login page.");
         toState(connect_to_mqtt);
       }
     }
     else {
-      Logger.println("[HTTP] Successful internet connectivity test.");
+      Serial.println("[HTTP] Successful internet connectivity test.");
       toState(connect_to_mqtt);
     }
   }
@@ -431,8 +415,8 @@ void loop(void)
   else if (state == load_config) {
     char config[CONFIG_MAX_SIZE];
     PersistentStore.readConfig(config);
-    Logger.println("Loaded config:");
-    Logger.println(config);
+    Serial.println("Loaded config:");
+    Serial.println(config);
     yield();
     loadConfig(config, false);
     if (mqttClient.state() == MQTT_CONNECTED) {
@@ -466,7 +450,7 @@ void loop(void)
     delay(2000);
 
     StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
-    // parseObject and printTo the same char array do not play well, so pass it a copy here
+    // parseObject and print the same char array do not play well, so pass it a copy here
     JsonObject& senses = jsonBuffer.createObject();
 
     if (dht11Pin != -1) {
@@ -492,10 +476,10 @@ void loop(void)
     }
 
     if (oneWirePin != -1) {    
-      IdiotOneWire.readOneWire(Logger, oneWirePin, senses);
+      IdiotOneWire.readOneWire(oneWirePin, senses);
     }
 
-    IdiotI2C.readI2C(Logger, I2C_PIN_1, I2C_PIN_2, senses);
+    IdiotI2C.readI2C(I2C_PIN_1, I2C_PIN_2, senses);
     int brightness = int(((1024 - analogRead(A0))*100) / 1024);
 
     senses["A0"] = brightness;
@@ -516,7 +500,7 @@ void loop(void)
     updateExpectations(senses);
     
     senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
-    Logger.printf("readSensesResult: %s\n", readSensesResult);
+    Serial.printf("readSensesResult: %s\n", readSensesResult);
 
     doActions(senses);
 
@@ -528,23 +512,23 @@ void loop(void)
   else if (state == publish) {
     buildStateString(finalState);
     yield();
-    Logger.println(finalState);
+    Serial.println(finalState);
     if (mqttClient.state() == MQTT_CONNECTED) {
         char topic[30];
         constructTopicName(topic, "things/");
         strcat(topic, "/update");
         
-        Logger.print("Publishing to ");
-        Logger.println(topic);
+        Serial.print("Publishing to ");
+        Serial.println(topic);
         bool success = mqttClient.publish(topic, finalState);
         if (!success) {
-            Logger.println("Failed to publish.");    
+            Serial.println("Failed to publish.");    
         }
         
         toState(cool_off);
     }
     else {
-        Logger.println("MQTT not connected so skip publishing.");
+        Serial.println("MQTT not connected so skip publishing.");
         toState(cool_off);
     }
   }
@@ -595,7 +579,7 @@ bool meetsExpectations(Sense sense) {
     }
     
     float variance = sqrt(sense.ssd / float(SENSE_EXPECTATIONS_WINDOW-1));
-    Logger.printf("Meets expectation check: %d <= %d <= %d\n", int(expectation - 2*variance), value, int(expectation + 2*variance));
+    Serial.printf("Meets expectation check: %d <= %d <= %d\n", int(expectation - 2*variance), value, int(expectation + 2*variance));
     if (expectation - 2*variance <= value && value <= expectation + 2*variance) {
         return true;
     }
@@ -673,7 +657,7 @@ void updateExpectations(JsonObject& senses) {
         previous_ssd = sense.ssd;
 
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
-            Logger.printf("No expectations yet for %s, seeding with current value %d\n", key, value);
+            Serial.printf("No expectations yet for %s, seeding with current value %d\n", key, value);
             previous_expectation = value;
             previous_ssd = 5 * 5 * SENSE_EXPECTATIONS_WINDOW * SENSE_EXPECTATIONS_WINDOW; // variance is at least 5^2 
         }
@@ -690,7 +674,7 @@ void updateExpectations(JsonObject& senses) {
         }
         new_ssd = previous_ssd * prior_weight + ssd_update;
         
-        Logger.printf("For %s expectation: %d->%d ; ssd %d->%d\n", key, previous_expectation, new_expectation, previous_ssd, new_ssd);
+        Serial.printf("For %s expectation: %d->%d ; ssd %d->%d\n", key, previous_expectation, new_expectation, previous_ssd, new_ssd);
         senses[key] = sense.withExpectationSSD(new_expectation, new_ssd).toString();
     }
 }
@@ -701,15 +685,15 @@ void doActions(JsonObject& senses) {
 
     for (i = 0; i < actionsSize; ++i) {
         Action action = actions[i];
-        Logger.print("Configured action ");
-        action.printTo(Logger);
+        Serial.print("Configured action ");
+        action.print();
         if (GpioMode.isAuto(action.getGpio())) {
             autoAction[i] = true;
-            Logger.print(" is enabled. ");
+            Serial.print(" is enabled. ");
         }
         else {
             autoAction[i] = false;
-            Logger.print(" is disabled as pin mode is not auto.");
+            Serial.print(" is disabled as pin mode is not auto.");
         }
     }
 
@@ -735,41 +719,41 @@ void doActions(JsonObject& senses) {
                 bool time_action = !strcmp(key, "time");
                 int value = sense.value; 
                 if (value == WRONG_VALUE) {
-                    Logger.printf("Could not parse or wrong value [%d]\n", value);
+                    Serial.printf("Could not parse or wrong value [%d]\n", value);
                 }
-                Logger.printf("Found sense for the action with value [%d]\n", value);
+                Serial.printf("Found sense for the action with value [%d]\n", value);
                 if (sense.wrong) {
-                    Logger.printf("Ignoring sense [%s] because value is marked as wrong\n", key);
-                    Logger.println("Preserving GPIO state");
+                    Serial.printf("Ignoring sense [%s] because value is marked as wrong\n", key);
+                    Serial.println("Preserving GPIO state");
                     GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
                     continue;
                 }
                 bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
                 if (time_action) {
                     if (value >= action.getThreshold() && value <= action.getThreshold() + action.getDelta()) {
-                        Logger.println("Time is within action period. GPIO should be ");
-                        Logger.println(aboveThresholdGpioState == LOW ? "low" : "high");
+                        Serial.println("Time is within action period. GPIO should be ");
+                        Serial.println(aboveThresholdGpioState == LOW ? "low" : "high");
                         ensureGpio(action.getGpio(), aboveThresholdGpioState);
                     }
                     else {
-                        Logger.println("Time is outside of action period. GPIO should be ");
-                        Logger.println(aboveThresholdGpioState == LOW ? "high" : "low");
+                        Serial.println("Time is outside of action period. GPIO should be ");
+                        Serial.println(aboveThresholdGpioState == LOW ? "high" : "low");
                         ensureGpio(action.getGpio(), !aboveThresholdGpioState);
                     }
                 }
                 else {
                     if (value <= action.getThreshold() - action.getDelta()) {
-                        Logger.println("Value is below threshold. GPIO should be ");
-                        Logger.println(aboveThresholdGpioState == LOW ? "high" : "low");
+                        Serial.println("Value is below threshold. GPIO should be ");
+                        Serial.println(aboveThresholdGpioState == LOW ? "high" : "low");
                         ensureGpio(action.getGpio(), !aboveThresholdGpioState);
                     }
                     else if (value >= action.getThreshold() + action.getDelta()) {
-                        Logger.println("Value is above threshold. GPIO should be ");
-                        Logger.println(aboveThresholdGpioState == LOW ? "low" : "high");
+                        Serial.println("Value is above threshold. GPIO should be ");
+                        Serial.println(aboveThresholdGpioState == LOW ? "low" : "high");
                         ensureGpio(action.getGpio(), aboveThresholdGpioState);
                     }
                     else {
-                        Logger.println("Preserving GPIO state");
+                        Serial.println("Preserving GPIO state");
                         GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
                     }
                 }
@@ -791,10 +775,10 @@ void doActions(JsonObject& senses) {
 void ensureGpio(int gpio, int state) {
   if (digitalRead(gpio) != state) {
     gpioStateChanged = true;
-    Logger.print("Changing GPIO ");
-    Logger.print(gpio);
-    Logger.print(" to ");
-    Logger.println(state);
+    Serial.print("Changing GPIO ");
+    Serial.print(gpio);
+    Serial.print(" to ");
+    Serial.println(state);
     
     pinMode(gpio, OUTPUT);
     digitalWrite(gpio, state);
@@ -806,31 +790,31 @@ void requestState() {
   char topic[30];
   constructTopicName(topic, "things/");
   strcat(topic, "/get");
-  Logger.print("Publishing to ");
-  Logger.println(topic);
+  Serial.print("Publishing to ");
+  Serial.println(topic);
   bool success = mqttClient.publish(topic, "{}");
   if (!success) {
-    Logger.println("Failed to publish.");    
+    Serial.println("Failed to publish.");    
   }
 }
 
 bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObject) {
-  Logger.print("DHT ");
+  Serial.print("DHT ");
   
   float temp_c, humidity;
   
   humidity = dht.readHumidity();          // Read humidity (percent)
   temp_c = dht.readTemperature(false);     // Read temperature as Celsius
   if (isnan(humidity) || isnan(temp_c)) {
-    Logger.print("fail ");
+    Serial.print("fail ");
     return false;
   }
   else {
-    Logger.println("OK");
-    Logger.print("Temperature: ");
-    Logger.println(temp_c);
-    Logger.print("Humidity: ");
-    Logger.println(humidity);
+    Serial.println("OK");
+    Serial.print("Temperature: ");
+    Serial.println(temp_c);
+    Serial.print("Humidity: ");
+    Serial.println(humidity);
     String sense = buildSenseKey(dhtType, "t");
     jsonObject[sense] = temp_c;
     sense = buildSenseKey(dhtType, "h");
@@ -848,9 +832,9 @@ void loadConfig(char* string, bool from_server) {
   StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
   JsonObject& root = jsonBuffer.parseObject(string);
   if (!root.success()) {
-    Logger.print("Could not parse JSON from config string: ");
-    Logger.println(string);
-    Logger.println("Writing in a new valid config.");
+    Serial.print("Could not parse JSON from config string: ");
+    Serial.println(string);
+    Serial.println("Writing in a new valid config.");
     saveConfig();
     return;
   }
@@ -863,7 +847,7 @@ void loadConfigFromJson(JsonObject& config, bool from_server) {
         const char* version = config["version"];
         if (strcmp(version, VERSION) == 0) {
             configChanged = true; // to push the new version to the cloud, notifying of the successful update
-            Logger.println("Already the correct version. Ignoring update delta.");
+            Serial.println("Already the correct version. Ignoring update delta.");
         }
         else {
             char fileName[20];
@@ -918,16 +902,16 @@ void loadActions(JsonArray& actionsJson) {
         bool success = action.fromConfig(action_string);
 
         if (!success) {
-            Logger.print("Could not parse action: ");
-            action.printTo(Logger);
+            Serial.print("Could not parse action: ");
+            action.print();
             continue;
         }
         if (actionsSize + 1 >= MAX_ACTIONS_SIZE) {
-            Logger.println("Too many actions already, ignoring the rest");
+            Serial.println("Too many actions already, ignoring the rest");
             break;
         }
 
-        action.printTo(Logger);
+        action.print();
         actions[actionsSize++] = action;
     }
 }
@@ -983,8 +967,8 @@ void saveConfig() {
 
   char configString[CONFIG_MAX_SIZE];
   root.printTo(configString, CONFIG_MAX_SIZE);
-  Logger.println("Saving config:");
-  Logger.println(configString);
+  Serial.println("Saving config:");
+  Serial.println(configString);
   PersistentStore.putConfig(configString);
 }
 
@@ -1024,7 +1008,7 @@ void buildStateString(char* stateJson) {
   
   int actualLength = root.measureLength();
   if (actualLength >= MAX_STATE_JSON_LENGTH) {
-    Logger.println("!!! Resulting JSON is too long, expect errors");
+    Serial.println("!!! Resulting JSON is too long, expect errors");
   }
 
   root.printTo(stateJson, MAX_STATE_JSON_LENGTH);

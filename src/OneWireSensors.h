@@ -6,14 +6,12 @@
 #include <ArduinoJson.h>
 #include "OneWire.h"
 
-#include "IdiotLogger.h"
-
 class OneWireSensors {
   public:
-    void readOneWire(IdiotLogger, int, JsonObject&); 
+    void readOneWire(int, JsonObject&); 
   private:
     void bytesToHex(char*, const byte*);
-    void readDS18x20(IdiotLogger, OneWire&, byte[], char*, JsonObject&); 
+    void readDS18x20(OneWire&, byte[], char*, JsonObject&); 
 };
 
 

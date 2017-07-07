@@ -1,10 +1,6 @@
 #ifndef ACTION_H
 #define ACTION_H
 
-#ifndef _TEST_
-#include "IdiotLogger.h"
-#endif
-
 class Action {
   public:
     Action();
@@ -18,7 +14,7 @@ class Action {
     int getDelta();
     int getGpio();
     
-    void printTo(IdiotLogger);
+    void print();
   private:
     char _sense[30];
     int _delta;
