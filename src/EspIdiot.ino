@@ -1,4 +1,4 @@
-#define VERSION "z17.8.1"
+#define VERSION "z18"
 
 #include <Arduino.h>
 
@@ -59,9 +59,10 @@
 #define MAX_STATE_JSON_LENGTH 740
 
 #define MAX_MQTT_CONNECT_ATTEMPTS 3
-#define MAX_WIFI_CONNECTED_ATTEMPTS 3
 #define MAX_READ_SENSES_RESULT_SIZE 512
 #define DELTA_WAIT_SECONDS 2
+#define WIFI_WAIT_SECONDS 5
+#define I2C_POWER_WAIT_SECONDS 3
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
@@ -82,7 +83,6 @@ char updateResultTopic[30];
 bool configChanged = false;
 bool gpioStateChanged = false;
 int mqttConnectAttempts = 0;
-int wifiConnectAttempts = 0;
 
 state_enum state = boot;
 
@@ -98,6 +98,9 @@ char finalState[MAX_STATE_JSON_LENGTH];
 Action actions[MAX_ACTIONS_SIZE];
 int actionsSize;
 
+
+unsigned long i2cPowerStartTime;
+unsigned long wifiWaitStartTime;
 unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
@@ -277,267 +280,286 @@ void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
 
 void loop(void)
 {
-  last_loop = millis();
-  display.refresh(state);
-  
-  idiotWifiServer.handleClient();
+    last_loop = millis();
+    display.refresh(state);
 
-  if (state == boot) {
-    pinMode(DISPLAY_CONTROL_PIN, INPUT);
-    attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
+    idiotWifiServer.handleClient();
 
-    wifiConnectAttempts = 0;
-    mqttConnectAttempts = 0;
-    
-    configChanged = false;
-    gpioStateChanged = false;
-    
-    updateConfigStartTime = 0;
+    if (state == boot) {
+        pinMode(DISPLAY_CONTROL_PIN, INPUT);
+        attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
 
-    serveLocallyStartMs = 0;
-    serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
-    actionsSize = 0;
+        mqttConnectAttempts = 0;
 
-    GpioState.clear();
-    GpioMode.clear();
-    
-    dht11Pin = -1;
-    dht22Pin = -1;
-    oneWirePin = DEFAULT_ONE_WIRE_PIN;
+        configChanged = false;
+        gpioStateChanged = false;
 
-    if (!PersistentStore.wifiCredentialsStored()) {
-      toState(serve_locally);
-      serveLocallySeconds = 60;
+        i2cPowerStartTime = 0;
+        updateConfigStartTime = 0;
+        wifiWaitStartTime = 0;
+
+        serveLocallyStartMs = 0;
+        serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
+        actionsSize = 0;
+
+        GpioState.clear();
+        GpioMode.clear();
+
+        dht11Pin = -1;
+        dht22Pin = -1;
+        oneWirePin = DEFAULT_ONE_WIRE_PIN;
+
+        if (!PersistentStore.wifiCredentialsStored()) {
+            toState(serve_locally);
+            serveLocallySeconds = 60;
+        }
+        else {
+            toState(connect_to_wifi);
+        }
+
+        return;
     }
-    else {
-      toState(connect_to_wifi);
+    else if (state == serve_locally) {
+        if (serveLocallyStartMs == 0) {
+            WiFi.disconnect();
+            WiFi.mode(WIFI_AP);
+            idiotWifiServer.start(uuid);
+            serveLocallyStartMs = millis();
+            Serial.print("Serving locally for ");
+            Serial.print(serveLocallySeconds);
+            Serial.println(" seconds");
+        }
+        else if (millis() - serveLocallyStartMs > serveLocallySeconds * 1000) {
+            toState(cool_off);
+        }
+        else {
+            delay(10);
+        }
+        return;
     }
+    else if (state == connect_to_wifi) {
+        WiFi.printDiag(Serial);
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("Already connected");
+            toState(connect_to_internet);
+            return;
+        }
+        char wifiName[WIFI_NAME_MAX_SIZE];
+        PersistentStore.readWifiName(wifiName);
+        char wifiPassword[WIFI_PASS_MAX_SIZE];
+        PersistentStore.readWifiPassword(wifiPassword);
+        Serial.printf("WiFi config: %s %s\n", wifiName, wifiPassword);
+        if (strlen(wifiPassword) == 0) {
+            WiFi.begin(wifiName);
+        }
+        else {
+            WiFi.begin(wifiName, wifiPassword);
+        }
 
-    return;
-  }
-  else if (state == serve_locally) {
-    if (serveLocallyStartMs == 0) {
-      WiFi.disconnect();
-      WiFi.mode(WIFI_AP);
-      idiotWifiServer.start(uuid);
-      serveLocallyStartMs = millis();
-      Serial.print("Serving locally for ");
-      Serial.print(serveLocallySeconds);
-      Serial.println(" seconds");
+        wifiWaitStartTime = millis();
+        toState(wifi_wait);
+        return;
     }
-    else if (millis() - serveLocallyStartMs > serveLocallySeconds * 1000) {
-      toState(cool_off);
+    else if (state == wifi_wait) {
+        if (WiFi.status() == WL_CONNECTED) {
+            toState(connect_to_internet);
+        }
+        else if (millis() - wifiWaitStartTime > WIFI_WAIT_SECONDS * 1000){
+            Serial.println("Waited enough for wifi, continue without.");
+            toState(load_config); 
+        }
+        else {
+            delay(50);
+        }
+        return;
     }
-    else {
-      delay(10);
-    }
-    return;
-  }
-  else if (state == connect_to_wifi) {
-    char wifiName[WIFI_NAME_MAX_SIZE];
-    PersistentStore.readWifiName(wifiName);
-    Serial.println(wifiName);
-    char wifiPassword[WIFI_PASS_MAX_SIZE];
-    PersistentStore.readWifiPassword(wifiPassword);
-    Serial.println(wifiPassword);
+    else if (state == connect_to_internet) {
+        const char* googleGenerate204 = "http://clients3.google.com/generate_204";
+        HTTPClient http;
+        Serial.print("[HTTP] Testing for redirection using ");
+        Serial.println(googleGenerate204);
+        http.begin(googleGenerate204);
+        int httpCode = http.GET();
 
-    if (strlen(wifiPassword) == 0) {
-      WiFi.begin(wifiName);
+        if (httpCode != 204) {
+            Serial.print("[HTTP] Redirection detected. GET code: ");
+            Serial.println(httpCode);
+
+            String payload = http.getString();
+            Serial.println(payload);
+
+            Serial.println("[HTTP] Trying to get past it...");
+            http.begin("http://1.1.1.1/login.html");
+            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+            httpCode = http.POST(String("username=guest&password=guest&buttonClicked=4"));
+
+            Serial.print("[HTTP] POST code: ");
+            Serial.println(httpCode);
+            Serial.println(http.getString());
+
+            Serial.println("[HTTP] Testing for redirection again");
+            http.begin(googleGenerate204);
+            httpCode = http.GET();
+            if (httpCode != 204) {
+                Serial.print("[HTTP] Redirection detected. GET code: ");
+                Serial.println(httpCode);
+                Serial.println("[HTTP] Could not connect to the internet - maybe stuck behind a login page.");
+                WiFi.disconnect(); // so that next connect_wifi we reconnect 
+                toState(load_config);
+            }
+            else {
+                Serial.println("[HTTP] Successfully passed the login page.");
+                toState(connect_to_mqtt);
+            }
+        }
+        else {
+            Serial.println("[HTTP] Successful internet connectivity test.");
+            toState(connect_to_mqtt);
+        }
     }
-    else {
-      WiFi.begin(wifiName, wifiPassword);
-    }
-    int wifiConnectResult = WiFi.waitForConnectResult();
-    
-    if (wifiConnectResult == WL_CONNECTED) {
-      toState(connect_to_internet);
-    }
-    else {
-      if (wifiConnectAttempts++ < MAX_WIFI_CONNECTED_ATTEMPTS) {
-        delay(1000);
-      }
-      else {
-        toState(load_config); 
-      }      
-    }
-    return;
-  }
-  else if (state == connect_to_internet) {
-    const char* googleGenerate204 = "http://clients3.google.com/generate_204";
-    HTTPClient http;
-    Serial.print("[HTTP] Testing for redirection using ");
-    Serial.println(googleGenerate204);
-    http.begin(googleGenerate204);
-    int httpCode = http.GET();
-
-    if (httpCode != 204) {
-      Serial.print("[HTTP] Redirection detected. GET code: ");
-      Serial.println(httpCode);
-
-      String payload = http.getString();
-      Serial.println(payload);
-
-      Serial.println("[HTTP] Trying to get past it...");
-      http.begin("http://1.1.1.1/login.html");
-      http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-      httpCode = http.POST(String("username=guest&password=guest&buttonClicked=4"));
-
-      Serial.print("[HTTP] POST code: ");
-      Serial.println(httpCode);
-      Serial.println(http.getString());
-
-      Serial.println("[HTTP] Testing for redirection again");
-      http.begin(googleGenerate204);
-      httpCode = http.GET();
-      if (httpCode != 204) {
-        Serial.print("[HTTP] Redirection detected. GET code: ");
-        Serial.println(httpCode);
-        Serial.println("[HTTP] Could not connect to the internet - stuck behind a login page.");
+    else if (state == connect_to_mqtt) {
+        while (mqttConnectAttempts++ < MAX_MQTT_CONNECT_ATTEMPTS && !mqttConnect()) { 
+            delay(1000);
+        }
         toState(load_config);
-      }
-      else {
-        Serial.println("[HTTP] Successfully passed the login page.");
-        toState(connect_to_mqtt);
-      }
+        return;
     }
-    else {
-      Serial.println("[HTTP] Successful internet connectivity test.");
-      toState(connect_to_mqtt);
+    else if (state == load_config) {
+        char config[CONFIG_MAX_SIZE];
+        PersistentStore.readConfig(config);
+        Serial.println("Loaded config:");
+        Serial.println(config);
+        yield();
+        loadConfig(config, false);
+        if (mqttClient.state() == MQTT_CONNECTED) {
+            toState(update_config);
+        }
+        else {
+            toState(read_senses);
+        }
     }
-  }
-  else if (state == connect_to_mqtt) {
-    while (mqttConnectAttempts++ < MAX_MQTT_CONNECT_ATTEMPTS && !mqttConnect()) { 
-      delay(1000);
+    else if (state == update_config) { 
+        if (updateConfigStartTime == 0) {
+            requestState();
+            updateConfigStartTime = millis();
+            configChanged = false;
+        }
+
+        if (!configChanged && millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
+            mqttClient.loop();
+            return; // do not move to next state yet
+        }
+        else {
+            if (configChanged) {
+                saveConfig();
+            }
+            toState(read_senses);
+        }
     }
-    toState(load_config);
-    return;
-  }
-  else if (state == load_config) {
-    char config[CONFIG_MAX_SIZE];
-    PersistentStore.readConfig(config);
-    Serial.println("Loaded config:");
-    Serial.println(config);
-    yield();
-    loadConfig(config, false);
-    if (mqttClient.state() == MQTT_CONNECTED) {
-      toState(update_config);
-    }
-    else {
-      toState(read_senses);
-    }
-  }
-  else if (state == update_config) { 
-    if (updateConfigStartTime == 0) {
-      requestState();
-      updateConfigStartTime = millis();
-      configChanged = false;
-    }
-    
-    if (!configChanged && millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
-      mqttClient.loop();
-      return; // do not move to next state yet
-    }
-    else {
-      if (configChanged) {
-        saveConfig();
-      }
-      toState(read_senses);
-    }
-  }
-  else if (state == read_senses) {
-    pinMode(I2C_POWER, OUTPUT);
-    digitalWrite(I2C_POWER, 1);
-    delay(2000);
+    else if (state == read_senses) {
+        if (i2cPowerStartTime == 0) {
+            Serial.print("Powering up I2C");
+            i2cPowerStartTime = millis();
+            pinMode(I2C_POWER, OUTPUT);
+            digitalWrite(I2C_POWER, 1);
+        }
 
-    StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
-    // parseObject and print the same char array do not play well, so pass it a copy here
-    JsonObject& senses = jsonBuffer.createObject();
-
-    if (dht11Pin != -1) {
-      DHT dht11(dht11Pin, DHT11);
-      dht11.begin();
-      int attempts = 0;
-      Serial.printf("Reading DHT11 from pin %d\n", dht11Pin);
-      while (!readTemperatureHumidity("DHT11", dht11, senses) && attempts < 3) {
-        delay(2000);
-        attempts++;
-      }
-    }
-    
-    if (dht22Pin != -1) {
-      DHT dht22(dht22Pin, DHT22);
-      dht22.begin();
-      int attempts = 0;
-      Serial.printf("Reading DHT22 from pin %d\n", dht22Pin);
-      while (!readTemperatureHumidity("DHT22", dht22, senses) && attempts < 3) {
-        delay(2000);
-        attempts++;
-      }
-    }
-
-    if (oneWirePin != -1) {    
-      IdiotOneWire.readOneWire(oneWirePin, senses);
-    }
-
-    IdiotI2C.readI2C(I2C_PIN_1, I2C_PIN_2, senses);
-    int brightness = int(((1024 - analogRead(A0))*100) / 1024);
-
-    senses["A0"] = brightness;
-
-    if (boot_time != -1) {
-        senses["time"] = seconds_today();
-    }
-
-    Serial.println("Enriching senses");
-    char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
-    strcpy(readSensesResultCopy, readSensesResult);
-    enrichSenses(senses, readSensesResultCopy);
-
-    Serial.println("Validating senses");
-    validate(senses);
-
-    Serial.println("Updating expectations");
-    updateExpectations(senses);
-    
-    senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
-    Serial.printf("readSensesResult: %s\n", readSensesResult);
-
-    doActions(senses);
-
-    digitalWrite(I2C_POWER, 0);
-
-    display.update(senses);
-    toState(publish);
-  }
-  else if (state == publish) {
-    buildStateString(finalState);
-    yield();
-    Serial.println(finalState);
-    if (mqttClient.state() == MQTT_CONNECTED) {
-        char topic[30];
-        constructTopicName(topic, "things/");
-        strcat(topic, "/update");
-        
-        Serial.print("Publishing to ");
-        Serial.println(topic);
-        bool success = mqttClient.publish(topic, finalState);
-        if (!success) {
-            Serial.println("Failed to publish.");    
+        if (millis() - i2cPowerStartTime < I2C_POWER_WAIT_SECONDS * 1000) {
+            Serial.print('.');
+            delay(50);
+            return;
         }
         
-        toState(cool_off);
+        Serial.println();
+
+        StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
+        // parseObject and print the same char array do not play well, so pass it a copy here
+        JsonObject& senses = jsonBuffer.createObject();
+
+        if (dht11Pin != -1) {
+            DHT dht11(dht11Pin, DHT11);
+            dht11.begin();
+            int attempts = 0;
+            Serial.printf("Reading DHT11 from pin %d\n", dht11Pin);
+            while (!readTemperatureHumidity("DHT11", dht11, senses) && attempts < 3) {
+                delay(2000);
+                attempts++;
+            }
+        }
+
+        if (dht22Pin != -1) {
+            DHT dht22(dht22Pin, DHT22);
+            dht22.begin();
+            int attempts = 0;
+            Serial.printf("Reading DHT22 from pin %d\n", dht22Pin);
+            while (!readTemperatureHumidity("DHT22", dht22, senses) && attempts < 3) {
+                delay(2000);
+                attempts++;
+            }
+        }
+
+        if (oneWirePin != -1) {    
+            IdiotOneWire.readOneWire(oneWirePin, senses);
+        }
+
+        IdiotI2C.readI2C(I2C_PIN_1, I2C_PIN_2, senses);
+        int brightness = int(((1024 - analogRead(A0))*100) / 1024);
+
+        senses["A0"] = brightness;
+
+        if (boot_time != -1) {
+            senses["time"] = seconds_today();
+        }
+
+        Serial.println("Enriching senses");
+        char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+        strcpy(readSensesResultCopy, readSensesResult);
+        enrichSenses(senses, readSensesResultCopy);
+
+        Serial.println("Validating senses");
+        validate(senses);
+
+        Serial.println("Updating expectations");
+        updateExpectations(senses);
+
+        senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
+        Serial.printf("readSensesResult: %s\n", readSensesResult);
+
+        doActions(senses);
+
+        digitalWrite(I2C_POWER, 0);
+
+        display.update(senses);
+        toState(publish);
     }
-    else {
-        Serial.println("MQTT not connected so skip publishing.");
-        toState(cool_off);
+    else if (state == publish) {
+        buildStateString(finalState);
+        yield();
+        Serial.println(finalState);
+        if (mqttClient.state() == MQTT_CONNECTED) {
+            char topic[30];
+            constructTopicName(topic, "things/");
+            strcat(topic, "/update");
+
+            Serial.print("Publishing to ");
+            Serial.println(topic);
+            bool success = mqttClient.publish(topic, finalState);
+            if (!success) {
+                Serial.println("Failed to publish.");    
+            }
+
+            toState(cool_off);
+        }
+        else {
+            Serial.println("MQTT not connected so skip publishing.");
+            toState(cool_off);
+        }
     }
-  }
-  else if (state == cool_off) {
-    detachInterrupt(DISPLAY_CONTROL_PIN); 
-    WiFi.disconnect();
-    toState(boot);
-    delay(1000);
-  }
+    else if (state == cool_off) {
+        detachInterrupt(DISPLAY_CONTROL_PIN); 
+        toState(boot);
+        delay(5000);
+    }
 }
 
 void enrichSenses(JsonObject& senses, char* previous_senses_string) {

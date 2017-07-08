@@ -4,6 +4,7 @@
 #define FOREACH_STATE(STATE) \
         STATE(boot)   \
         STATE(connect_to_wifi) \
+        STATE(wifi_wait) \
         STATE(connect_to_internet) \
         STATE(connect_to_mqtt) \
         STATE(serve_locally) \
