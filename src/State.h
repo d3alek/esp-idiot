@@ -10,6 +10,9 @@
         STATE(serve_locally) \
         STATE(load_config) \
         STATE(update_config) \
+        STATE(setup_lora) \
+        STATE(listen_lora) \
+        STATE(send_lora) \
         STATE(read_senses) \
         STATE(publish) \
         STATE(ota_update)    \

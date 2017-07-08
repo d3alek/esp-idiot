@@ -1,4 +1,4 @@
-#define VERSION "z18"
+#define VERSION "z2v0.2"
 
 #include <Arduino.h>
 
@@ -50,9 +50,20 @@
 
 #include "Sense.h"
 
+#include "SX1272.h"
+#include <SPI.h>
+#define SX1272_debug_mode 2
+#define RADIO_RFM92_95
+#define BAND900
+
+// lora gateway
+#define GATEWAY_ADDR 1
+
+// lora slave
+#define LORA_MODE  1
+#define SLAVE_ADDR 5
+
 #define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
-#define I2C_PIN_1 14 // SDA
-#define I2C_PIN_2 12 // SDC
 
 #define HARD_RESET_PIN 0
 
@@ -106,9 +117,7 @@ unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
 
-#define DISPLAY_CONTROL_PIN 0
-OLED oled(I2C_PIN_1, I2C_PIN_2);
-DisplayController display(oled);
+bool lora_gateway = false;
 
 unsigned long boot_time = -1;
 
@@ -141,7 +150,6 @@ void toState(state_enum newState) {
 // See https://github.com/esp8266/Arduino/issues/1722
 void updateFromS3(char* updatePath) {
   toState(ota_update);
-  display.refresh(state, true);
 
   char updateUrl[100];
   strcpy(updateUrl, UPDATE_URL);
@@ -246,11 +254,6 @@ void setup(void)
 
     PersistentStore.begin();
 
-    Wire.pins(I2C_PIN_1, I2C_PIN_2);
-    Wire.begin();
-    Wire.setClockStretchLimit(2000); // in µs
-    display.begin();
-
     WiFi.mode(WIFI_STA);
 
     ensureGpio(PIN_A, 0);
@@ -263,8 +266,6 @@ void setup(void)
     if(!digitalRead(HARD_RESET_PIN)) {
         hardReset();
     }
-
-    
 }
 
 volatile unsigned long lastInterruptTime = 0;
@@ -272,7 +273,6 @@ volatile unsigned long debounceDelay = 300;
 
 void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
     if (millis() - lastInterruptTime > debounceDelay) {
-        display.changeMode();
         lastInterruptTime = millis();
     }
 }
@@ -280,7 +280,6 @@ void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
 void loop(void)
 {
     last_loop = millis();
-    display.refresh(state);
     idiotWifiServer.handleClient();
 
     if (mqttClient.connected()) {
@@ -288,9 +287,6 @@ void loop(void)
     }
 
     if (state == boot) {
-        pinMode(DISPLAY_CONTROL_PIN, INPUT);
-        attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
-
         configChanged = false;
         configReceived = false;
         gpioStateChanged = false;
@@ -430,7 +426,7 @@ void loop(void)
             toState(update_config);
         }
         else {
-            toState(read_senses);
+            toState(setup_lora);
         }
     }
     else if (state == update_config) { 
@@ -453,80 +449,85 @@ void loop(void)
             if (configChanged) {
                 saveConfig();
             }
-            toState(read_senses);
+            toState(setup_lora);
         }
     }
-    else if (state == read_senses) {
-        if (i2cPowerStartTime == 0) {
-            Serial.printf("[power up I2C]\n");
-            i2cPowerStartTime = millis();
-            pinMode(I2C_POWER, OUTPUT);
-            digitalWrite(I2C_POWER, 1);
+    else if (state == setup_lora) {
+        int e;
+        if (lora_gateway) {
+            // Print a start message
+            Serial.println(F("SX1272 module and Arduino: receive packets without ACK"));
+
+            // Power ON the module
+            e = sx1272.ON();
+            Serial.print(F("Setting power ON: state "));
+            Serial.println(e, DEC);
+
+            // Set transmission mode and print the result
+            e = sx1272.setMode(1);
+            Serial.print(F("Setting Mode: state "));
+            Serial.println(e, DEC);
+
+            // Set header
+            e = sx1272.setHeaderON();
+            Serial.print(F("Setting Header ON: state "));
+            Serial.println(e, DEC);
+
+            // Select frequency channel
+            e = sx1272.setChannel(CH_05_900);
+            Serial.print(F("Setting Channel: state "));
+            Serial.println(e, DEC);
+
+
+            // Select output power (Max, High or Low)
+            e = sx1272.setPower('x');
+            Serial.print(F("Setting Power: state "));
+            Serial.println(e, DEC);
+
+            // Set the node address and print the result
+            e = sx1272.setNodeAddress(GATEWAY_ADDR);
+            Serial.print(F("Setting node address: state "));
+            Serial.println(e, DEC);
+
+            // Print a success message
+            Serial.println(F("SX1272 successfully configured"));
+            Serial.println();
+            toState(listen_lora);
         }
+        else { // LoRa slave based on https://github.com/marciolm/EspComLoRa/blob/master/EspComLora_Simple_temp_deepsleep/EspComLora_Simple_temp_deepsleep.ino
+            Serial.println("LoRa slave");
+            sx1272.ON();
+            e = sx1272.setMode(LORA_MODE);
+            Serial.printf("Setting Mode: %d\n", e);
+            // sx1272._enableCarrierSense=true; // dunno what this is
+            e = sx1272.setChannel(CH_05_900);
+            Serial.printf("Setting Channel: %d\n", e);
+            e = sx1272.setPower('x');
+            Serial.printf("Setting Power: %d\n", e);
 
-        if (millis() - i2cPowerStartTime < I2C_POWER_WAIT_SECONDS * 1000) {
-            Serial.print('.');
-            delay(50);
-            return;
+            e = sx1272.setNodeAddress(SLAVE_ADDR);
+            Serial.printf("Setting Node Address: %d\n", e);
+            Serial.println(F("SX1272 successfully configured"));
+            toState(send_lora);
         }
-        
-        Serial.println();
-
-        StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
-        // parseObject and print the same char array do not play well, so pass it a copy here
-        JsonObject& senses = jsonBuffer.createObject();
-
-        if (dht11Pin != -1) {
-            DHT dht11(dht11Pin, DHT11);
-            dht11.begin();
-            int attempts = 0;
-            Serial.printf("? reading DHT11 from pin %d\n", dht11Pin);
-            while (!readTemperatureHumidity("DHT11", dht11, senses) && attempts < 3) {
-                delay(2000);
-                attempts++;
+    }
+    else if (state == listen_lora) {
+        int e = sx1272.receivePacketTimeout(10000);
+        char packet[100];
+        Serial.printf("Receive packet result: %d\n", e);
+        if (e == 0) {
+            for (unsigned int i = 0; i < sx1272.packet_received.length; i++) {
+                packet[i] = (char)sx1272.packet_received.data[i];
             }
+            Serial.printf("? packet is %s\n", packet);
         }
-
-        if (dht22Pin != -1) {
-            DHT dht22(dht22Pin, DHT22);
-            dht22.begin();
-            int attempts = 0;
-            Serial.printf("? reading DHT22 from pin %d\n", dht22Pin);
-            while (!readTemperatureHumidity("DHT22", dht22, senses) && attempts < 3) {
-                delay(2000);
-                attempts++;
-            }
-        }
-
-        if (oneWirePin != -1) {    
-            IdiotOneWire.readOneWire(oneWirePin, senses);
-        }
-
-        IdiotI2C.readI2C(I2C_PIN_1, I2C_PIN_2, senses);
-        int brightness = int(((1024 - analogRead(A0))*100) / 1024);
-
-        senses["A0"] = brightness;
-
-        if (boot_time != -1) {
-            senses["time"] = seconds_today();
-        }
-
-        char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
-        strcpy(readSensesResultCopy, readSensesResult);
-        enrichSenses(senses, readSensesResultCopy);
-
-        validate(senses);
-
-        updateExpectations(senses);
-
-        senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
-        Serial.printf("[result]\n%s\n", readSensesResult);
-
-        doActions(senses);
-
-        digitalWrite(I2C_POWER, 0);
-
-        display.update(senses);
+        toState(publish);
+    }
+    else if (state == send_lora) {
+        sx1272.setPacketType(PKT_TYPE_DATA);
+        char message[] = "Hello gateway!";
+        int e = sx1272.sendPacketTimeout(GATEWAY_ADDR, message);
+        Serial.printf("Send packet result: %d\n", e);
         toState(publish);
     }
     else if (state == publish) {
@@ -561,7 +562,6 @@ void loop(void)
             delay(100);
         }
         else {
-            detachInterrupt(DISPLAY_CONTROL_PIN); 
             toState(boot);
         }
     }
@@ -870,6 +870,15 @@ void loadConfigFromJson(JsonObject& config, bool from_server) {
             ESP.restart();
         }
     }
+    if (config.containsKey("lora")) {
+        configChanged = true;
+        if (!strcmp(config["lora"], "gateway")) {
+            lora_gateway = true;
+        }
+        else {
+            lora_gateway = false;
+        }
+    }
     if (config.containsKey("gpio")) {
         configChanged = true;
         loadGpioConfig(config["gpio"]);
@@ -969,6 +978,8 @@ void injectConfig(JsonObject& config) {
 
   JsonObject& mode = config.createNestedObject("mode");
   injectGpioMode(mode);
+
+  config["lora"] = lora_gateway ? "gateway" : "slave";
 }
 
 void saveConfig() {
