@@ -61,7 +61,7 @@
 #define MAX_READ_SENSES_RESULT_SIZE 512
 #define DELTA_WAIT_SECONDS 2
 #define WIFI_WAIT_SECONDS 5
-#define COOL_OFF_WAIT_SECONDS 5
+#define COOL_OFF_WAIT_SECONDS 15
 #define I2C_POWER_WAIT_SECONDS 3
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
@@ -367,7 +367,7 @@ void loop(void)
             toState(connect_to_internet);
         }
         else if (millis() - wifiWaitStartTime > WIFI_WAIT_SECONDS * 1000){
-            Serial.println("? waited enough for wifi, continue without.");
+            Serial.println("\n? waited for wifi enough, continue without.");
             toState(load_config); 
         }
         else {
@@ -554,14 +554,14 @@ void loop(void)
     }
     else if (state == cool_off) {
         if (coolOffStartTime == 0) {
-            detachInterrupt(DISPLAY_CONTROL_PIN); 
             coolOffStartTime = millis();
         }
-        if (millis() - coolOffStartTime < COOL_OFF_WAIT_SECONDS * 1000) {
+        else if (millis() - coolOffStartTime < COOL_OFF_WAIT_SECONDS * 1000) {
             Serial.print('.');
-            delay(50);
+            delay(100);
         }
         else {
+            detachInterrupt(DISPLAY_CONTROL_PIN); 
             toState(boot);
         }
     }

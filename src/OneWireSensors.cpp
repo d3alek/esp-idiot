@@ -71,17 +71,9 @@ void OneWireSensors::readDS18x20(OneWire& oneWire, byte* addr, char* device, Jso
     oneWire.select(addr);    
     oneWire.write(0xBE);         // Read Scratchpad
 
-    Serial.print("P=");
-    Serial.print(present,HEX);
-    Serial.print(" ");
     for ( i = 0; i < 9; i++) {           // we need 9 bytes
         data[i] = oneWire.read();
-        Serial.print(data[i], HEX);
-        Serial.print(" ");
     }
-    Serial.print(" CRC=");
-    Serial.print( OneWire::crc8( data, 8), HEX);
-    Serial.println();
 
     // Convert the data to actual temperature
     // because the result is a 16 bit signed integer, it should
@@ -105,7 +97,7 @@ void OneWireSensors::readDS18x20(OneWire& oneWire, byte* addr, char* device, Jso
     float celsius = (float)raw / 16.0;
 
     jsonObject[String(device)] = celsius;
-    Serial.println(celsius);
+    Serial.printf("%s=%d\n", device, int(celsius));
 }
 
 // buffer must be at least 17 long, bytes are assumed to be 8
