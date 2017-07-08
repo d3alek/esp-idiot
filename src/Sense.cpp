@@ -16,7 +16,7 @@ Sense Sense::fromJson(JsonVariant vesw) {
     if (vesw.is<const char*>()) {
         return fromString(vesw.as<const char*>());
     }
-    Serial.println("JsonObject is not string, creating an all false Sense value");
+    Serial.println("? JsonObject is not string, creating an all false Sense value");
     
     return *this;
 }
@@ -33,7 +33,7 @@ void Sense::parse(const char* vesw) {
         }
         next_part_begin = strchr(current_part_begin, (int)'|');
         if (next_part_begin == NULL) {
-            Serial.printf("Encountered null next part begin on step %d, marking remaining as wrong\n", i);
+            Serial.printf("? encountered null next part begin on step %d, marking remaining as wrong\n", i);
             switch (i) {
                 case 0:
                     value = WRONG_VALUE;

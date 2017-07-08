@@ -100,6 +100,6 @@ void Action::buildActionString(char* action_string) {
 }
 
 void Action::print() {
-  Serial.printf("%s[t:%d,d:%d,g:%d-%d]\n",_sense,_threshold,_delta, _gpio, _aboveThresholdGpioState);
+  Serial.printf("%s[t:%d,d:%d,g:%d-%d]",_sense,_threshold,_delta, _gpio, _aboveThresholdGpioState);
 }
 

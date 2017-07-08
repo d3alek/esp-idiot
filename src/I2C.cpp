@@ -28,12 +28,11 @@ void I2C::readI2C(int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
     if (device == 32) { // Address of the capacitive soil moisture sensor
         I2CSoilMoistureSensor sensor; 
         sensor.begin(true); // true means wait 1 second
-        Serial.print("I2C Soil Moisture Sensor Software Firmware Version: ");
+        Serial.print("? I2C Soil Moisture Sensor version: ");
         Serial.println(sensor.getVersion(), HEX);
-        Serial.print("Soil Moisture Capacitance: ");
         int capacitance = sensor.getCapacitance();
-        Serial.println(capacitance);
-        Serial.print("Soil Moisture Temperature: ");
+        Serial.printf("? capacitance: %d\n", capacitance);
+        Serial.print("? temperature: ");
         float temperature = sensor.getTemperature() / (float) 10;
         Serial.println(temperature);
         String key_string = String(key)+"c";
@@ -42,7 +41,7 @@ void I2C::readI2C(int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
         jsonObject[key_string] = temperature;
     }
     else if (device == 60) {
-        Serial.println("Ignoring I2C screen from senses");
+        Serial.println("? ignoring I2C screen");
     }
     else {
         error = false;
@@ -120,15 +119,16 @@ void I2C::readI2C(int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
         
         String key_string = String(key);
         if (version_byte < MINIMUM_VERSION) {
-            Serial.printf("Marking I2C read value as wrong because I2C device has old version. Expected at least %d got %d\n", MINIMUM_VERSION, version_byte);
+            Serial.printf("? marking I2C-%d as wrong - old version: %d < %d\n", device, version_byte, MINIMUM_VERSION);
             jsonObject[key_string] = String("w") + value;
         }
         else if (error) {
-            Serial.printf("Marking I2C read value as wrong because endTransmission returned error %d\n", error);
+            Serial.printf("? marking I2C-%d as wrong - endTransmission error %d\n", device, error);
             jsonObject[key_string] = String("w") + value;
         }
         else {
             jsonObject[key_string] = value;
+            Serial.printf("? I2C-%d = %d\n", device, value);
         }
     }
   }
@@ -161,43 +161,41 @@ int I2C::binary_subset(int value, int from_lower, int to_lower) {
 
 
 void I2C::scan() {
-  int error, address;
+    int error, address;
 
-  Serial.println("Scanning I2C...");
+    Serial.println("[scan I2C]");
 
-  devices_size = 0;
-  for(address = 1; address < 127; address++ ) 
-  {
-    // The i2c_scanner uses the return value of
-    // the Write.endTransmisstion to see if
-    // a device did acknowledge to the address.
-    Wire.beginTransmission(address);
-    error = Wire.endTransmission();
-
-    if (error == 0)
+    devices_size = 0;
+    for(address = 1; address < 127; address++ ) 
     {
-      Serial.print("I2C device found at ");
-      Serial.println(address);
-      if (address < 8) {
-        Serial.println("Must be an error - no I2C device should have an address below 8. Assuming floating I2C bus and returning no results.");
-        devices_size = 0;
-        return;     
-      }
-	    devices[devices_size++] = address;
-      if (devices_size >= MAX_DEVICES) {
-        Serial.println("I2C device limit reached");
-        break;
-      }
-    }
-    else if (error==4) 
-    {
-      Serial.print("Unknow error at address ");
-      Serial.println(address);
-    }
-  }
+        // The i2c_scanner uses the return value of
+        // the Write.endTransmisstion to see if
+        // a device did acknowledge to the address.
+        Wire.beginTransmission(address);
+        error = Wire.endTransmission();
 
-  Serial.print(devices_size);
-  Serial.println(" I2C devices found");
+        if (error == 0)
+        {
+            Serial.printf("+I2C-%d ", address);
+            if (address < 8) {
+                Serial.println("!!! no I2C device should be < 8 - assuming floating I2C bus");
+                devices_size = 0;
+                return;
+            }
+
+            devices[devices_size++] = address;
+            if (devices_size >= MAX_DEVICES) {
+                Serial.println("!!! I2C device limit reached");
+                break;
+            }
+        }
+        else if (error==4) 
+        {
+            Serial.printf("!!! unknow error at address %d\n", address);
+        }
+    }
+
+    Serial.printf("\n? %d I2C devices found\n", devices_size);
 }
 
 I2C IdiotI2C;

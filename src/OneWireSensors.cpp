@@ -1,6 +1,7 @@
 #include "OneWireSensors.h"
 
 void OneWireSensors::readOneWire(int oneWirePin, JsonObject& jsonObject) {
+    Serial.println("[one wire]");
     OneWire oneWire(oneWirePin);
     int devicesFound = 0;
     byte addr[8];
@@ -9,13 +10,12 @@ void OneWireSensors::readOneWire(int oneWirePin, JsonObject& jsonObject) {
 
     while (true) {
         if ( !oneWire.search(addr)) {
-            Serial.print("No more addresses.\n");
             break;
         }
         devicesFound++;
 
         if ( OneWire::crc8( addr, 7) != addr[7]) {
-            Serial.print("CRC is not valid!\n");
+            Serial.print("? CRC is not valid!\n");
             return;
         }
 
@@ -24,23 +24,20 @@ void OneWireSensors::readOneWire(int oneWirePin, JsonObject& jsonObject) {
         char device[25];
         strcpy(device, "OW-");
         strcat(device, deviceAddr);
-        Serial.print("addr: ");
-        Serial.print(device);
         if ( addr[0] == 0x10) {
-            Serial.println(" DS18S20 family device");
+            Serial.printf("? %s type DS18S20\n", device);
             readDS18x20(oneWire, addr, device, jsonObject);
         }
         else if ( addr[0] == 0x28) {
-            Serial.println(" DS18B20 family device.");
+            Serial.printf("? %s type DS18B20\n", device);
             readDS18x20(oneWire, addr, device, jsonObject);
         }
         else {
-            Serial.print(" Device family not recognized: 0x");
+            Serial.printf("!!! %s type not recognized from byte 0x%02X\n", addr[0]);
             continue;
         }
     }
-    Serial.print("OneWire devices found: ");
-    Serial.println(devicesFound);
+    Serial.printf("? %d OneWire devices found\n", devicesFound);
 }
 
 // code from 

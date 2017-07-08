@@ -62,6 +62,7 @@ void DisplayController::refresh(state_enum state, bool force) {
 }
 
 void DisplayController::update(JsonObject& senses) {
+    Serial.println("[display updated senses]");
     int counter = 0;
     const char* key;
     for (JsonObject::iterator it = senses.begin(); it != senses.end(); ++it) {

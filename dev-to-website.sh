@@ -7,9 +7,13 @@ if [[ -z "$VERSION" ]]; then
     exit 1
 fi
 
+BIN_FILE=/www/zelenik/firmware/$VERSION.bin
+if [ -f $BIN_FILE ]; then
+    echo "$BIN_FILE already exists. Exiting."
+    exit 1
+fi
 
 echo "Pushing dev version $VERSION..."
 
 PLATFORMIO_BUILD_FLAGS=-DDEV pio run && \
-    cp .pioenvs/esp12e/firmware.bin /www/zelenik/firmware/$VERSION.bin && \
-    echo "Done."
+    cp .pioenvs/esp12e/firmware.bin $BIN_FILE && echo "Done."
