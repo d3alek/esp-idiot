@@ -20,7 +20,7 @@ import re
 
 VERSION = "d1"
 DIR = "/idiot/esp-idiot/esp_logger/"
-THING_NAME_PATTERN = re.compile(r'^? listening to update/([a-zA-Z0-9-]+)')
+THING_NAME_PATTERN = re.compile(r'^publish to things/([a-zA-Z0-9-]+)/update')
 
 logging.basicConfig(level=logging.INFO)
 
