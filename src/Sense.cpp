@@ -58,7 +58,7 @@ void Sense::parse(const char* vesw) {
         value_string[length] = '\0';
         switch(i) {
             case 0:
-                value = atoi(value_string);
+                value = atof(value_string);
                 break;
             case 1:
                 expectation = atoi(value_string);
