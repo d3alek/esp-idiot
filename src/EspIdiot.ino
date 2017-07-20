@@ -1,4 +1,4 @@
-#define VERSION "z18"
+#define VERSION "z18.1"
 
 #include <Arduino.h>
 
@@ -578,7 +578,7 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
 
     bool wrong;
     const char* key;
-    int value;
+    float value;
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
         wrong = false;
         key = it->key;
@@ -589,8 +589,13 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
             const char* value_string = it->value; 
             if (strlen(value_string) > 0 && value_string[0] == 'w') {
                 wrong = true;    
+                value = atoi(value_string+1);
             }
-            value = atoi(value_string+1);
+            else {
+                Serial.println("! string sense value but not wrong, should never happen"); 
+                wrong = true;
+                value = WRONG_VALUE;
+            }
         }
         else {
             value = it->value;
@@ -620,7 +625,7 @@ void validate(JsonObject& senses) {
             continue;
         }
         Sense sense = Sense().fromJson(it->value);
-        int value = sense.value;
+        float value = sense.value;
         if (sense.wrong) {
             continue;
         }
@@ -665,7 +670,8 @@ void validate(JsonObject& senses) {
 // Modified Welford algorithm to use windwowed-mean instead of true mean
 void updateExpectations(JsonObject& senses) {
     Serial.println("[update expectations]");
-    int previous_expectation, new_expectation, previous_ssd, new_ssd, value;
+    int previous_expectation, new_expectation, previous_ssd, new_ssd;
+    float value;
     int delta, delta2;
     const char* key;
     Sense sense;

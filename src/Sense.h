@@ -10,12 +10,12 @@ class Sense {
         Sense();
         Sense fromString(const char*);
         Sense fromJson(JsonVariant);
-        int value;
+        float value;
         int expectation;
         int ssd;
         bool wrong;
         String toString();
-        Sense withValue(int);
+        Sense withValue(float);
         Sense withExpectationSSD(int, int);
         Sense withWrong(bool);
     private:

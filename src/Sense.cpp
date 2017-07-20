@@ -71,7 +71,7 @@ void Sense::parse(const char* vesw) {
     }
 }
 
-Sense Sense::withValue(int value) {
+Sense Sense::withValue(float value) {
     this->value = value;
     this->wrong = false;
     return *this;
@@ -89,5 +89,5 @@ Sense Sense::withWrong(bool wrong) {
 }
 
 String Sense::toString() {
-    return String(value) + "|" + String(expectation) + "|" + String(ssd) + "|" + (wrong ? String("w") : String("c"));
+    return String(value, 1) + "|" + String(expectation) + "|" + String(ssd) + "|" + (wrong ? String("w") : String("c"));
 }
