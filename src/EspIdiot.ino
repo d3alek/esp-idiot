@@ -1,4 +1,4 @@
-#define VERSION "z2v0.2"
+#define VERSION "z2v0.3"
 
 #include <Arduino.h>
 
@@ -120,6 +120,9 @@ float serveLocallySeconds;
 bool lora_gateway = false;
 
 unsigned long boot_time = -1;
+
+#include <Led.h>
+Led led(2); // built-in led
 
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
@@ -281,6 +284,7 @@ void loop(void)
 {
     last_loop = millis();
     idiotWifiServer.handleClient();
+    led.loop();
 
     if (mqttClient.connected()) {
         mqttClient.loop();
@@ -389,7 +393,7 @@ void loop(void)
             http.addHeader("Content-Type", "application/x-www-form-urlencoded");
             httpCode = http.POST(String("username=guest&password=guest&buttonClicked=4"));
 
-            Serial.printf("? result: %d %s\n", httpCode);
+            Serial.printf("? result: %d\n", httpCode);
             Serial.println(http.getString());
 
             Serial.println("[check for redirection again]");
@@ -520,6 +524,10 @@ void loop(void)
                 packet[i] = (char)sx1272.packet_received.data[i];
             }
             Serial.printf("? packet is %s\n", packet);
+            led.blink_fast(3); 
+        }
+        else {
+            led.blink_slow(1);
         }
         toState(publish);
     }
@@ -528,6 +536,13 @@ void loop(void)
         char message[] = "Hello gateway!";
         int e = sx1272.sendPacketTimeout(GATEWAY_ADDR, message);
         Serial.printf("Send packet result: %d\n", e);
+        if (e == 0) {
+            led.blink_fast(3); 
+        }
+        else {
+            led.blink_slow(1);
+        }
+
         toState(publish);
     }
     else if (state == publish) {
