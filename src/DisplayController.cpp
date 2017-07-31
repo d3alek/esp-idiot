@@ -8,6 +8,11 @@ DisplayController::DisplayController(OLED oled) {
     mode = 0;
     changed = true;
 
+    to_print = false;
+    for (int i = 0; i < MAX_LINES; ++i) {
+        strcpy(to_print_lines[i], "");
+    }
+
 }
 
 void DisplayController::begin() {
@@ -36,6 +41,14 @@ void DisplayController::refresh(state_enum state, bool force) {
     }
     changed = false;
     oled.clear();
+    if (to_print) {
+        to_print = false;
+        for (int i = 0; i < MAX_LINES; ++i) {
+            oled.print(to_print_lines[i], i, 1); // maybe last argument can be 0 - change if you think there is unused space on the left of the screen
+            strcpy(to_print_lines[i], "");
+        }
+        return;
+    }
     oled.print("Zelenik");
 
     if (state == ota_update) {
@@ -59,6 +72,28 @@ void DisplayController::refresh(state_enum state, bool force) {
     else if (mode <= displayables_size) {
         displayDetailed(mode-1);
     }
+}
+
+void DisplayController::print_on_refresh(int line, String string) {
+    print_on_refresh(line, string.c_str());
+}
+/* This function is superior to OLED::print 
+ * because it refreshes the whole screen at once, later 
+ * when DisplayController::refresh is called.
+ * With the refresh rate being as slow as it is now, 
+ * it is an improvement to refresh it once 
+ * and update all the lines. */
+void DisplayController::print_on_refresh(int line, const char* string) {
+    if (line >= MAX_LINES) {
+        Serial.printf("Line number %d should be at maximum %d. Ignoring print_on_refresh call.\n", line, MAX_LINES);
+        return;
+    }
+    if (strlen(string) >= MAX_LINE_LENGTH) {
+        Serial.printf("Line length %d should be at maximum %d. Truncating down to maximum\n", strlen(string), MAX_LINE_LENGTH);
+    }
+    strncpy(to_print_lines[line], string, MAX_LINE_LENGTH);
+    to_print = true;
+    changed = true;
 }
 
 void DisplayController::update(JsonObject& senses) {

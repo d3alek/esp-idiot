@@ -1,4 +1,4 @@
-#define VERSION "z2v0.3"
+#define VERSION "z2v0.4"
 
 #include <Arduino.h>
 
@@ -63,7 +63,8 @@
 #define LORA_MODE  1
 #define SLAVE_ADDR 5
 
-#define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
+#define I2C_PIN_SDA 4
+#define I2C_PIN_SCL 5
 
 #define HARD_RESET_PIN 0
 
@@ -73,7 +74,6 @@
 #define DELTA_WAIT_SECONDS 2
 #define WIFI_WAIT_SECONDS 5
 #define COOL_OFF_WAIT_SECONDS 1
-#define I2C_POWER_WAIT_SECONDS 3
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
@@ -116,6 +116,9 @@ unsigned long wifiWaitStartTime;
 unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
+
+OLED oled(I2C_PIN_SDA, I2C_PIN_SCL);
+DisplayController display(oled);
 
 bool lora_gateway = false;
 
@@ -257,12 +260,17 @@ void setup(void)
 
     PersistentStore.begin();
 
+    Wire.pins(I2C_PIN_SDA, I2C_PIN_SCL);
+    Wire.begin();
+    Wire.setClockStretchLimit(2000); // in µs
+
+    display.begin();
+
     WiFi.mode(WIFI_STA);
 
     ensureGpio(PIN_A, 0);
     ensureGpio(PIN_B, 0);
     ensureGpio(PIN_C, 0);
-    ensureGpio(I2C_POWER, 0);
 
     pinMode(HARD_RESET_PIN, INPUT);
     delay(1000);
@@ -283,6 +291,7 @@ void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
 void loop(void)
 {
     last_loop = millis();
+    display.refresh(state);
     idiotWifiServer.handleClient();
     led.loop();
 
@@ -457,78 +466,71 @@ void loop(void)
         }
     }
     else if (state == setup_lora) {
-        int e;
+        int error;
         if (lora_gateway) {
-            // Print a start message
-            Serial.println(F("SX1272 module and Arduino: receive packets without ACK"));
+            Serial.println("LoRa gateway");
 
-            // Power ON the module
-            e = sx1272.ON();
-            Serial.print(F("Setting power ON: state "));
-            Serial.println(e, DEC);
+            error = sx1272.ON();
+            printReturnCode("ON", error);
 
-            // Set transmission mode and print the result
-            e = sx1272.setMode(1);
-            Serial.print(F("Setting Mode: state "));
-            Serial.println(e, DEC);
+            error = sx1272.setMode(LORA_MODE);
+            printReturnCode("setMode(LORA_MODE)", error);
 
-            // Set header
-            e = sx1272.setHeaderON();
-            Serial.print(F("Setting Header ON: state "));
-            Serial.println(e, DEC);
+            error = sx1272.setHeaderON();
+            printReturnCode("setHeaderON()", error);
 
-            // Select frequency channel
-            e = sx1272.setChannel(CH_05_900);
-            Serial.print(F("Setting Channel: state "));
-            Serial.println(e, DEC);
+            error = sx1272.setChannel(CH_05_900);
+            printReturnCode("setChannel(CH_05_900)", error);
 
+            error = sx1272.setPower('x');
+            printReturnCode("setPower('x')", error);
 
-            // Select output power (Max, High or Low)
-            e = sx1272.setPower('x');
-            Serial.print(F("Setting Power: state "));
-            Serial.println(e, DEC);
-
-            // Set the node address and print the result
-            e = sx1272.setNodeAddress(GATEWAY_ADDR);
-            Serial.print(F("Setting node address: state "));
-            Serial.println(e, DEC);
-
-            // Print a success message
-            Serial.println(F("SX1272 successfully configured"));
-            Serial.println();
+            error = sx1272.setNodeAddress(GATEWAY_ADDR);
+            printReturnCode("setNodeAddress(GATEWAY_ADDR)", error);
             toState(listen_lora);
         }
-        else { // LoRa slave based on https://github.com/marciolm/EspComLoRa/blob/master/EspComLora_Simple_temp_deepsleep/EspComLora_Simple_temp_deepsleep.ino
+        else {
+            // LoRa slave based on 
+            // https://github.com/marciolm/EspComLoRa/blob/master/EspComLora_Simple_temp_deepsleep/EspComLora_Simple_temp_deepsleep.ino
             Serial.println("LoRa slave");
-            sx1272.ON();
-            e = sx1272.setMode(LORA_MODE);
-            Serial.printf("Setting Mode: %d\n", e);
-            // sx1272._enableCarrierSense=true; // dunno what this is
-            e = sx1272.setChannel(CH_05_900);
-            Serial.printf("Setting Channel: %d\n", e);
-            e = sx1272.setPower('x');
-            Serial.printf("Setting Power: %d\n", e);
+            error = sx1272.ON();
+            printReturnCode("ON", error);
 
-            e = sx1272.setNodeAddress(SLAVE_ADDR);
-            Serial.printf("Setting Node Address: %d\n", e);
-            Serial.println(F("SX1272 successfully configured"));
+            error = sx1272.setMode(LORA_MODE);
+            printReturnCode("setMode(LORA_MODE)", error);
+
+            // sx1272._enableCarrierSense=true; // dunno what this is
+            error = sx1272.setChannel(CH_05_900);
+            printReturnCode("setChannel(CH_05_900)", error);
+
+            error = sx1272.setPower('x');
+            printReturnCode("setPower('x')", error);
+
+            error = sx1272.setNodeAddress(SLAVE_ADDR);
+            printReturnCode("setNodeAddress(SLAVE_ADDR)", error);
+ 
             toState(send_lora);
         }
     }
     else if (state == listen_lora) {
-        int e = sx1272.receivePacketTimeout(10000);
+        int error = sx1272.receivePacketTimeout(10000);
+        printReturnCode("receivePacketTimeout", error);
         char packet[100];
-        Serial.printf("Receive packet result: %d\n", e);
-        if (e == 0) {
+        if (error == 0) {
             for (unsigned int i = 0; i < sx1272.packet_received.length; i++) {
                 packet[i] = (char)sx1272.packet_received.data[i];
             }
             Serial.printf("? packet is %s\n", packet);
             led.blink_fast(3);
-            int lala = sx1272.getRSSIpacket();    //Gets the RSSI of the last packet received in LoRa mode.
-            Serial.println(lala);
+            error = sx1272.getRSSI();
+            printReturnCode("getRSSI", error);
+            error = sx1272.getRSSIpacket();
+            printReturnCode("getRSSIpacket", error);
+            display.print_on_refresh(0, String("RSSI ") + sx1272._RSSI);
+            display.print_on_refresh(1, String("RSSIpacket ") + sx1272._RSSIpacket);
         }
         else {
+            display.print_on_refresh(0, "No packet received.");
             led.blink_slow(1);
         }
         toState(publish);
@@ -536,13 +538,20 @@ void loop(void)
     else if (state == send_lora) {
         sx1272.setPacketType(PKT_TYPE_DATA);
         char message[] = "Hello gateway!";
-        int e = sx1272.sendPacketTimeout(GATEWAY_ADDR, message);
-        Serial.printf("Send packet result: %d\n", e);
-        if (e == 0) {
+        int error = sx1272.sendPacketTimeout(GATEWAY_ADDR, message);
+        printReturnCode("sendPacketTimeout", error);
+        if (error == 0) {
             led.blink_fast(3);
+            error = sx1272.getRSSI();
+            printReturnCode("getRSSI", error);
+            error = sx1272.getRSSIpacket();
+            printReturnCode("getRSSIpacket", error);
+            display.print_on_refresh(0, String("RSSI ") + sx1272._RSSI);
+            display.print_on_refresh(1, String("RSSIpacket ") + sx1272._RSSIpacket);
         }
         else {
             led.blink_slow(1);
+            display.print_on_refresh(0, "Error sending packet");
         }
 
         toState(publish);
@@ -582,6 +591,10 @@ void loop(void)
             toState(boot);
         }
     }
+}
+
+void printReturnCode(const char* method, int error) {
+    Serial.printf("? %s %s\n", method, !error ? "successful" : "failed");
 }
 
 void enrichSenses(JsonObject& senses, char* previous_senses_string) {

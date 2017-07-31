@@ -8,6 +8,8 @@
 
 #define MAX_DISPLAYABLES 5
 #define UPDATE_DISPLAY_SECONDS 3
+#define MAX_LINES 8
+#define MAX_LINE_LENGTH 16
 
 class DisplayController {
     public:
@@ -20,6 +22,8 @@ class DisplayController {
         void update(JsonObject&);
         void changeMode();
         void displayDetailed(int);
+        void print_on_refresh(int line, String string);
+        void print_on_refresh(int line, const char* string);
 
         OLED oled;
         Displayable displayables[MAX_DISPLAYABLES];
@@ -28,5 +32,7 @@ class DisplayController {
         unsigned long last_refresh_millis;
         volatile int mode;
         volatile bool changed;
+        bool to_print;
+        char to_print_lines[MAX_LINES][MAX_LINE_LENGTH];
 };
 #endif
