@@ -29,6 +29,7 @@
 #include "SX1272.h"
 #include <SPI.h>
 
+
 /*  CHANGE LOGS by C. Pham
  *
  *  Jan, 23rd, 2016
@@ -85,7 +86,7 @@ SX1272::SX1272()
     _channel = CH_12_900;
     _header = HEADER_ON;
     _CRC = CRC_OFF;
-    _modem = LORA;
+    _modem = FSK;
     _power = 15;
     _packetNumber = 0;
     _reception = CORRECT_PACKET;

@@ -1,24 +1,24 @@
 /*
  *  Library for LoRa 868 / 915MHz SX1272 LoRa module
- *  
- *  Copyright (C) Libelium Comunicaciones Distribuidas S.L. 
- *  http://www.libelium.com 
- *  
- *  This program is free software: you can redistribute it and/or modify 
- *  it under the terms of the GNU General Public License as published by 
- *  the Free Software Foundation, either version 3 of the License, or 
- *  (at your option) any later version. 
- *  
- *  This program is distributed in the hope that it will be useful, 
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of 
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the 
+ *
+ *  Copyright (C) Libelium Comunicaciones Distribuidas S.L.
+ *  http://www.libelium.com
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *  
- *  You should have received a copy of the GNU General Public License 
- *  along with this program.  If not, see http://www.gnu.org/licenses/. 
- *  
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see http://www.gnu.org/licenses/.
+ *
  *  Version:           1.1
- *  Design:            David Gascón 
+ *  Design:            David Gascón
  *  Implementation:    Covadonga Albiñana & Victor Boria
  */
 
@@ -60,7 +60,7 @@
 #define SX1276Chip  1
 // end
 
-#define SX1272_debug_mode 0
+#define SX1272_debug_mode 1
 
 //! MACROS //
 #define bitRead(value, bit) (((value) >> (bit)) & 0x01)  // read a bit
@@ -209,7 +209,7 @@
 // added by C. Pham
 // The crystal oscillator frequency of the module
 #define RH_LORA_FXOSC 32000000.0
- 
+
 // The Frequency Synthesizer step = RH_LORA_FXOSC / 2^^19
 #define RH_LORA_FCONVERT  (524288 / RH_LORA_FXOSC)
 
@@ -362,9 +362,9 @@ const uint8_t INCORRECT_PACKET = 1;
 struct pack
 {
 	// added by C. Pham
-#ifdef W_NET_KEY	
+#ifdef W_NET_KEY
 	uint8_t netkey[NET_KEY_LENGTH];
-#endif	
+#endif
 	//! Structure Variable : Packet destination
 	/*!
  	*/
@@ -1179,7 +1179,7 @@ public:
         uint8_t _the_net_key_1;
 #endif
 	// end
-	
+
 	/// Variables /////////////////////////////////////////////////////////////
 
 	//! Variable : bandwidth configured in LoRa mode.

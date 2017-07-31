@@ -52,7 +52,7 @@
 
 #include "SX1272.h"
 #include <SPI.h>
-#define SX1272_debug_mode 2
+
 #define RADIO_RFM92_95
 #define BAND900
 
