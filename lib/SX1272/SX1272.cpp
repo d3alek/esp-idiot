@@ -85,7 +85,7 @@ SX1272::SX1272()
     _channel = CH_12_900;
     _header = HEADER_ON;
     _CRC = CRC_OFF;
-    _modem = FSK;
+    _modem = LORA;
     _power = 15;
     _packetNumber = 0;
     _reception = CORRECT_PACKET;
@@ -126,16 +126,16 @@ void SX1272::RxChainCalibration()
 
         // Cut the PA just in case, RFO output, power = -1 dBm
         writeRegister( REG_PA_CONFIG, 0x00 );
-    
+
         // Launch Rx chain calibration for LF band
         writeRegister( REG_IMAGE_CAL, ( readRegister( REG_IMAGE_CAL ) & RF_IMAGECAL_IMAGECAL_MASK ) | RF_IMAGECAL_IMAGECAL_START );
         while( ( readRegister( REG_IMAGE_CAL ) & RF_IMAGECAL_IMAGECAL_RUNNING ) == RF_IMAGECAL_IMAGECAL_RUNNING )
         {
         }
-    
+
         // Sets a Frequency in HF band
         setChannel(CH_17_868);
-    
+
         // Launch Rx chain calibration for HF band
         writeRegister( REG_IMAGE_CAL, ( readRegister( REG_IMAGE_CAL ) & RF_IMAGECAL_IMAGECAL_MASK ) | RF_IMAGECAL_IMAGECAL_START );
         while( ( readRegister( REG_IMAGE_CAL ) & RF_IMAGECAL_IMAGECAL_RUNNING ) == RF_IMAGECAL_IMAGECAL_RUNNING )
@@ -182,7 +182,7 @@ uint8_t SX1272::ON()
 #endif
     //Set data mode
     SPI.setDataMode(SPI_MODE0);
-#endif  
+#endif
 
     delay(100);
 
@@ -757,7 +757,7 @@ int8_t SX1272::setMode(uint8_t mode)
         break;
 
         // mode 8 (medium reach, medium time-on-air)
-    case 8:     
+    case 8:
     	setCR(CR_5);        // CR = 4/5
         setSF(SF_9);        // SF = 9
         setBW(BW_500);      // BW = 500 KHz
@@ -2767,7 +2767,7 @@ int8_t SX1272::setPower(char p)
         // 130mA
         setMaxCurrent(0x10);
     }
-    
+
     if (p=='X') {
         // normally value = 0x0F;
         // we set the PA_BOOST pin
@@ -4223,7 +4223,7 @@ boolean	SX1272::availableData(uint16_t wait)
 #endif
 
     previous = millis();
-   
+
     if( _modem == LORA )
     { // LoRa mode
         value = readRegister(REG_IRQ_FLAGS);
@@ -6348,11 +6348,11 @@ uint8_t SX1272::doCAD(uint8_t counter)
             if( bitRead(value, 2) == 1 )
             {
                 state = 0;	// CAD successfully performed
-#ifdef DEBUG_CAD				  
+#ifdef DEBUG_CAD
                 Serial.print(F("SX1272::CAD duration "));
                 Serial.println(endCAD-startCAD);
                 Serial.println(F("SX1272::CAD successfully performed"));
-#endif				  
+#endif
 
                 value = readRegister(REG_IRQ_FLAGS);
 
@@ -6361,7 +6361,7 @@ uint8_t SX1272::doCAD(uint8_t counter)
                 {
                     // we detected activity
                     failedCAD=true;
-#ifdef DEBUG_CAD				  		
+#ifdef DEBUG_CAD
                     Serial.print(F("SX1272::CAD exits after "));
                     Serial.println(save_counter-counter);
 #endif
@@ -6371,10 +6371,10 @@ uint8_t SX1272::doCAD(uint8_t counter)
             }
             else
             {
-#ifdef DEBUG_CAD			  	 	
+#ifdef DEBUG_CAD
                 Serial.print(F("SX1272::CAD duration "));
                 Serial.println(endCAD-startCAD);
-#endif				  
+#endif
                 if( state == 1 )
                 {
 #ifdef DEBUG_CAD
@@ -6404,7 +6404,7 @@ uint8_t SX1272::doCAD(uint8_t counter)
 
     clearFlags();		// Initializing flags
 
-#ifdef DEBUG_CAD	  
+#ifdef DEBUG_CAD
     Serial.print(F("SX1272::doCAD duration "));
     Serial.println(endDoCad-startDoCad);
 #endif
@@ -6481,7 +6481,7 @@ uint16_t SX1272::getToA(uint8_t pl) {
     // must add 4 to the programmed preamble length to get the effective preamble length
     double tPreamble=((_preamblelength+4)+4.25)*ts;
 
-#ifdef DEBUG_GETTOA	
+#ifdef DEBUG_GETTOA
     Serial.print(F("SX1272::ts is "));
     printDouble(ts,6);
     Serial.println();
@@ -6498,7 +6498,7 @@ uint16_t SX1272::getToA(uint8_t pl) {
     double tmp = (8*pl - 4*_spreadingFactor + 28 + 16 - 20*_header) /
             (double)(4*(_spreadingFactor-2*DE) );
 
-#ifdef DEBUG_GETTOA                         
+#ifdef DEBUG_GETTOA
     Serial.print(F("SX1272::tmp is "));
     printDouble(tmp,6);
     Serial.println();
@@ -6508,7 +6508,7 @@ uint16_t SX1272::getToA(uint8_t pl) {
 
     double nPayload = 8 + ( ( tmp > 0 ) ? tmp : 0 );
 
-#ifdef DEBUG_GETTOA    
+#ifdef DEBUG_GETTOA
     Serial.print(F("SX1272::nPayload is "));
     Serial.println(nPayload);
 #endif
@@ -6521,7 +6521,7 @@ uint16_t SX1272::getToA(uint8_t pl) {
 
     //////
 
-#ifdef DEBUG_GETTOA    
+#ifdef DEBUG_GETTOA
     Serial.print(F("SX1272::airTime is "));
     Serial.println(airTime);
 #endif
@@ -6749,14 +6749,14 @@ int8_t SX1272::setSleepMode() {
 
     writeRegister(REG_OP_MODE, LORA_STANDBY_MODE);
     writeRegister(REG_OP_MODE, LORA_SLEEP_MODE);    // LoRa sleep mode
-	
+
 	//delay(50);
-	
+
     value = readRegister(REG_OP_MODE);
 
 	//Serial.print(F("## REG_OP_MODE 0x"));
 	//Serial.println(value, HEX);
-	
+
     if (value == LORA_SLEEP_MODE)
         state=0;
     else

@@ -72,7 +72,7 @@
 #define MAX_READ_SENSES_RESULT_SIZE 512
 #define DELTA_WAIT_SECONDS 2
 #define WIFI_WAIT_SECONDS 5
-#define COOL_OFF_WAIT_SECONDS 15
+#define COOL_OFF_WAIT_SECONDS 1
 #define I2C_POWER_WAIT_SECONDS 3
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
@@ -174,7 +174,7 @@ void updateFromS3(char* updatePath) {
           Serial.println("HTTP_UPDATE_OK");
           break;
   }
-  
+
   return;
 }
 
@@ -272,7 +272,7 @@ void setup(void)
 }
 
 volatile unsigned long lastInterruptTime = 0;
-volatile unsigned long debounceDelay = 300; 
+volatile unsigned long debounceDelay = 300;
 
 void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
     if (millis() - lastInterruptTime > debounceDelay) {
@@ -368,7 +368,7 @@ void loop(void)
         }
         else if (millis() - wifiWaitStartTime > WIFI_WAIT_SECONDS * 1000){
             Serial.println("\n? waited for wifi enough, continue without.");
-            toState(load_config); 
+            toState(load_config);
         }
         else {
             Serial.print('.');
@@ -402,7 +402,7 @@ void loop(void)
             if (httpCode != 204) {
                 Serial.printf("? redirection detected. GET code: %d\n", httpCode);
                 Serial.println("!!! WiFi connected but no access to internet - maybe stuck behind a login page.");
-                WiFi.disconnect(); // so that next connect_wifi we reconnect 
+                WiFi.disconnect(); // so that next connect_wifi we reconnect
                 toState(load_config);
             }
             else {
@@ -433,7 +433,7 @@ void loop(void)
             toState(setup_lora);
         }
     }
-    else if (state == update_config) { 
+    else if (state == update_config) {
         if (updateConfigStartTime == 0) {
             requestState();
             updateConfigStartTime = millis();
@@ -442,7 +442,7 @@ void loop(void)
         }
 
         if (!configReceived && millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
-            Serial.print('.');    
+            Serial.print('.');
             return;
         }
         else {
@@ -524,7 +524,9 @@ void loop(void)
                 packet[i] = (char)sx1272.packet_received.data[i];
             }
             Serial.printf("? packet is %s\n", packet);
-            led.blink_fast(3); 
+            led.blink_fast(3);
+            int lala = sx1272.getRSSIpacket();    //Gets the RSSI of the last packet received in LoRa mode.
+            Serial.println(lala);
         }
         else {
             led.blink_slow(1);
@@ -537,7 +539,7 @@ void loop(void)
         int e = sx1272.sendPacketTimeout(GATEWAY_ADDR, message);
         Serial.printf("Send packet result: %d\n", e);
         if (e == 0) {
-            led.blink_fast(3); 
+            led.blink_fast(3);
         }
         else {
             led.blink_slow(1);
@@ -557,7 +559,7 @@ void loop(void)
             Serial.printf("publish to %s\n", topic);
             bool success = mqttClient.publish(topic, finalState);
             if (!success) {
-                Serial.println("!!! failed to publish");    
+                Serial.println("!!! failed to publish");
                 mqttClient.disconnect();
             }
 
@@ -601,9 +603,9 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
             continue;
         }
         if (it->value.is<const char*>()) {
-            const char* value_string = it->value; 
+            const char* value_string = it->value;
             if (strlen(value_string) > 0 && value_string[0] == 'w') {
-                wrong = true;    
+                wrong = true;
             }
             value = atoi(value_string+1);
         }
@@ -620,7 +622,7 @@ bool meetsExpectations(const char* name, Sense sense) {
     if (expectation == WRONG_VALUE || sense.ssd == WRONG_VALUE) {
         return true;
     }
-    
+
     float variance = sqrt(sense.ssd / float(SENSE_EXPECTATIONS_WINDOW-1));
     bool result = (expectation - 2*variance <= value && value <= expectation + 2*variance);
     Serial.printf("? %s %s: %d <= %d <= %d\n", name, (result ? "ok": "wrong"), int(expectation - 2*variance), value, int(expectation + 2*variance));
@@ -645,7 +647,7 @@ void validate(JsonObject& senses) {
         if (sense.value == WRONG_VALUE) {
 
             wrong = true;
-        } 
+        }
         else if (!strcmp(key, "I2C-32c")) {
             if (value < 200 || value > 1000) {
                 wrong = true;
@@ -670,7 +672,7 @@ void validate(JsonObject& senses) {
         if (!wrong && !meetsExpectations(key, sense)) {
             wrong = true;
         }
-        
+
         if (wrong) {
             senses[key] = sense.withWrong(true).toString();
         }
@@ -700,11 +702,11 @@ void updateExpectations(JsonObject& senses) {
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
             Serial.printf("? no expectations yet for %s, seeding with current value %d\n", key, value);
             previous_expectation = value;
-            previous_ssd = 5 * 5 * SENSE_EXPECTATIONS_WINDOW * SENSE_EXPECTATIONS_WINDOW; // variance is at least 5^2 
+            previous_ssd = 5 * 5 * SENSE_EXPECTATIONS_WINDOW * SENSE_EXPECTATIONS_WINDOW; // variance is at least 5^2
         }
 
         delta = value - previous_expectation;
-        new_expectation = previous_expectation * prior_weight + value * posterior_weight; 
+        new_expectation = previous_expectation * prior_weight + value * posterior_weight;
         if (new_expectation < value) {
             new_expectation += 1; // adding 1 because of integer rounding
         }
@@ -714,7 +716,7 @@ void updateExpectations(JsonObject& senses) {
             ssd_update = 1; // always overestimate variance instead of underestimating it due to integer rounding
         }
         new_ssd = previous_ssd * prior_weight + ssd_update;
-        
+
         Serial.printf("? %s expectation: %d->%d ; ssd %d->%d\n", key, previous_expectation, new_expectation, previous_ssd, new_ssd);
         senses[key] = sense.withExpectationSSD(new_expectation, new_ssd).toString();
     }
@@ -745,7 +747,7 @@ void doActions(JsonObject& senses) {
         Sense sense;
         if (!strcmp(key, "time")) {
             sense = sense.withValue(it->value).withWrong(false); // time sense, if present, is never wrong
-        }  
+        }
         else {
             sense = sense.fromJson(it->value);
         }
@@ -756,7 +758,7 @@ void doActions(JsonObject& senses) {
             Action action = actions[i];
             if (!strcmp(action.getSense(), key)) {
                 bool time_action = !strcmp(key, "time");
-                int value = sense.value; 
+                int value = sense.value;
                 Serial.printf("? found sense %s for the action with value [%d]\n", key, value);
                 if (value == WRONG_VALUE) {
                     Serial.printf("!!! could not parse or wrong value\n", value);
@@ -823,16 +825,16 @@ void requestState() {
     Serial.printf("? publish to %s\n", topic);
     bool success = mqttClient.publish(topic, "{}");
     if (!success) {
-        Serial.println("!!! failed to publish");    
+        Serial.println("!!! failed to publish");
         mqttClient.disconnect();
     }
 }
 
 bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObject) {
   Serial.print("DHT ");
-  
+
   float temp_c, humidity;
-  
+
   humidity = dht.readHumidity();          // Read humidity (percent)
   temp_c = dht.readTemperature(false);     // Read temperature as Celsius
   if (isnan(humidity) || isnan(temp_c)) {
@@ -849,7 +851,7 @@ bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObjec
     jsonObject[sense] = temp_c;
     sense = buildSenseKey(dhtType, "h");
     jsonObject[sense] = humidity;
-    
+
     return true;
   }
 }
@@ -866,7 +868,7 @@ void loadConfig(char* string, bool from_server) {
     saveConfig();
     return;
   }
-  
+
   loadConfigFromJson(root, from_server);
 }
 
@@ -1029,20 +1031,20 @@ void buildStateString(char* stateJson) {
   reported["state"] = STATE_STRING[state];
   reported["version"] = VERSION;
   reported["b"] = boot_time;
-  
+
   JsonObject& gpio = reported.createNestedObject("write");
   injectGpioState(gpio);
-  
+
   JsonObject& config = reported.createNestedObject("config");
 
   injectConfig(config);
-  
+
   StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
   // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
   char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
   strcpy(readSensesResultCopy, readSensesResult);
   reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
-  
+
   int actualLength = root.measureLength();
   if (actualLength >= MAX_STATE_JSON_LENGTH) {
     Serial.println("!!! resulting JSON is too long, expect errors");
@@ -1052,13 +1054,13 @@ void buildStateString(char* stateJson) {
   return;
 }
 
-void injectGpioState(JsonObject& gpio) { 
+void injectGpioState(JsonObject& gpio) {
   for (int i = 0; i < GpioState.getSize(); ++i) {
     gpio[String(GpioState.getGpio(i))] = GpioState.getState(i);
   }
 }
 
-void injectGpioMode(JsonObject& mode) { 
+void injectGpioMode(JsonObject& mode) {
     int gpio;
     for (int i = 0; i < GpioMode.getSize(); ++i) {
         gpio = GpioMode.getGpio(i);
@@ -1070,4 +1072,3 @@ void injectGpioMode(JsonObject& mode) {
         }
     }
 }
-
