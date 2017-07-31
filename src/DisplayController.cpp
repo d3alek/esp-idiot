@@ -44,7 +44,7 @@ void DisplayController::refresh(state_enum state, bool force) {
     if (to_print) {
         to_print = false;
         for (int i = 0; i < MAX_LINES; ++i) {
-            oled.print(to_print_lines[i], i, 1); // maybe last argument can be 0 - change if you think there is unused space on the left of the screen
+            oled.print(to_print_lines[i], i, 0);
             strcpy(to_print_lines[i], "");
         }
         return;
