@@ -1,4 +1,4 @@
-#define VERSION "z2v0.5"
+#define VERSION "z2v0.6"
 
 #include <Arduino.h>
 
@@ -55,6 +55,8 @@ ADC_MODE(ADC_VCC); // necessary for ESP.getVcc() to work
 // lora specific
 #include "SX1272.h"
 #include <SPI.h>
+
+#define SX1272_SS 15
 
 #define RADIO_RFM92_95
 #define BAND868

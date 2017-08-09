@@ -1,4 +1,4 @@
-/*
+/* 
  *  Library for LoRa 868 / 915MHz SX1272 LoRa module
  *
  *  Copyright (C) Libelium Comunicaciones Distribuidas S.L.
@@ -29,9 +29,27 @@
 #include "SX1272.h"
 #include <SPI.h>
 
-
 /*  CHANGE LOGS by C. Pham
- *
+ *  June, 22th, 2017
+ *      - setPowerDBM(uint8_t dbm) calls setPower('X') when dbm is set to 20
+ *  Apr, 21th, 2017
+ *      - change the way timeout are detected: exitTime=millis()+(unsigned long)wait; then millis() < exitTime;
+ *  Mar, 26th, 2017
+ *      - insert delay(100) before setting radio module to sleep mode. Remove unstability issue
+ *      - (proposed by escyes - https://github.com/CongducPham/LowCostLoRaGw/issues/53#issuecomment-289237532)
+ *  Jan, 11th, 2017
+ *      - fix bug in getRSSIpacket() when SNR < 0 thanks to John Rohde from Aarhus University
+ *  Dec, 17th, 2016
+ *      - fix bug making -DPABOOST in radio.makefile inoperant
+ *  Dec, 1st, 2016
+ *      - add RSSI computation while performing CAD with doCAD()
+ *      - WARNING: the SX1272 lib for gateway (Raspberry) does not have this functionality
+ *  Nov, 26th, 2016
+ *		- add preliminary support for ToA limitation
+ *      - when in "production" mode, uncomment #define LIMIT_TOA
+ *  Nov, 16th, 2016
+ *		- provide better power management mechanisms
+ *		- manage PA_BOOST and dBm setting 
  *  Jan, 23rd, 2016
  *      - the packet format at transmission does not use the original Libelium format anymore
  *      * the retry field is removed therefore all operations using retry will probably not work well, not tested though
@@ -71,6 +89,17 @@
 // based on SIFS=3CAD
 uint8_t sx1272_SIFS_value[11]={0, 183, 94, 44, 47, 23, 24, 12, 12, 7, 4};
 uint8_t sx1272_CAD_value[11]={0, 62, 31, 16, 16, 8, 9, 5, 3, 1, 1};
+
+//#define LIMIT_TOA
+// 0.1% for testing
+//#define MAX_DUTY_CYCLE_PER_HOUR 3600L
+// 1%, regular mode
+#define MAX_DUTY_CYCLE_PER_HOUR 36000L
+// normally 1 hour, set to smaller value for testing
+#define DUTYCYCLE_DURATION 3600000L
+// 4 min for testing
+//#define DUTYCYCLE_DURATION 240000L
+
 // end
 
 //**********************************************************************/
@@ -100,6 +129,15 @@ SX1272::SX1272()
     _enableCarrierSense=false;
     // DIFS by default
     _send_cad_number=9;
+#ifdef PABOOST
+    _needPABOOST=true;
+#else
+    _needPABOOST=false;
+#endif
+    _limitToA=false;
+    _startToAcycle=millis();
+    _remainingToA=MAX_DUTY_CYCLE_PER_HOUR;
+    _endToAcycle=_startToAcycle+DUTYCYCLE_DURATION;
 #ifdef W_REQUESTED_ACK
     _requestACK = 0;
 #endif
@@ -127,16 +165,16 @@ void SX1272::RxChainCalibration()
 
         // Cut the PA just in case, RFO output, power = -1 dBm
         writeRegister( REG_PA_CONFIG, 0x00 );
-
+    
         // Launch Rx chain calibration for LF band
         writeRegister( REG_IMAGE_CAL, ( readRegister( REG_IMAGE_CAL ) & RF_IMAGECAL_IMAGECAL_MASK ) | RF_IMAGECAL_IMAGECAL_START );
         while( ( readRegister( REG_IMAGE_CAL ) & RF_IMAGECAL_IMAGECAL_RUNNING ) == RF_IMAGECAL_IMAGECAL_RUNNING )
         {
         }
-
+    
         // Sets a Frequency in HF band
         setChannel(CH_17_868);
-
+    
         // Launch Rx chain calibration for HF band
         writeRegister( REG_IMAGE_CAL, ( readRegister( REG_IMAGE_CAL ) & RF_IMAGECAL_IMAGECAL_MASK ) | RF_IMAGECAL_IMAGECAL_START );
         while( ( readRegister( REG_IMAGE_CAL ) & RF_IMAGECAL_IMAGECAL_RUNNING ) == RF_IMAGECAL_IMAGECAL_RUNNING )
@@ -173,17 +211,16 @@ uint8_t SX1272::ON()
     SPI.begin();
     //Set Most significant bit first
     SPI.setBitOrder(MSBFIRST);
-#ifdef _VARIANT_ARDUINO_DUE_X_
+#ifdef _VARIANT_ARDUINO_DUE_X_ 
     // for the DUE, set to 4MHz
     SPI.setClockDivider(42);
 #else
     // for the MEGA, set to 2MHz
-   SPI.setClockDivider(SPI_CLOCK_DIV8);
- //     SPI.setClockDivider(SPI_CLOCK_DIV4);
-#endif
+    SPI.setClockDivider(SPI_CLOCK_DIV8);
+#endif   
     //Set data mode
     SPI.setDataMode(SPI_MODE0);
-#endif
+#endif  
 
     delay(100);
 
@@ -369,6 +406,18 @@ uint8_t SX1272::ON()
     setSyncWord(_defaultSyncWord);
     getSyncWord();
     _defaultSyncWord=_syncWord;
+
+#ifdef LIMIT_TOA
+    uint16_t remainingToA=limitToA();
+    Serial.println(F("## Limit ToA ON ##"));
+    Serial.print(F("cycle begins at "));
+    Serial.print(_startToAcycle);
+    Serial.print(F(" cycle ends at "));
+    Serial.print(_endToAcycle);
+    Serial.print(F(" remaining ToA is "));
+    Serial.print(remainingToA);
+    Serial.println();
+#endif
     //end
 
     return state;
@@ -758,7 +807,7 @@ int8_t SX1272::setMode(uint8_t mode)
         break;
 
         // mode 8 (medium reach, medium time-on-air)
-    case 8:
+    case 8:     
     	setCR(CR_5);        // CR = 4/5
         setSF(SF_9);        // SF = 9
         setBW(BW_500);      // BW = 500 KHz
@@ -2479,6 +2528,14 @@ boolean	SX1272::isChannel(uint32_t ch)
     // Checking available values for _channel
     switch(ch)
     {
+        //added by C. Pham
+    case CH_04_868:
+    case CH_05_868:
+    case CH_06_868:
+    case CH_07_868:
+    case CH_08_868:
+    case CH_09_868:
+        //end
     case CH_10_868:
     case CH_11_868:
     case CH_12_868:
@@ -2504,6 +2561,10 @@ boolean	SX1272::isChannel(uint32_t ch)
     case CH_11_900:
         //added by C. Pham
     case CH_12_900:
+    case CH_00_433:
+    case CH_01_433:
+    case CH_02_433:
+    case CH_03_433:
         //end
         return true;
         break;
@@ -2639,6 +2700,9 @@ int8_t SX1272::setChannel(uint32_t ch)
         state = 1;
     }
 
+    // commented by C. Pham to avoid adding new channel each time
+    // besides, the test above is sufficient
+    /*
     if(!isChannel(ch) )
     {
         state = -1;
@@ -2649,6 +2713,7 @@ int8_t SX1272::setChannel(uint32_t ch)
         Serial.println();
 #endif
     }
+    */
 
     writeRegister(REG_OP_MODE, st0);	// Getting back to previous status
     delay(100);
@@ -2768,7 +2833,7 @@ int8_t SX1272::setPower(char p)
         // 130mA
         setMaxCurrent(0x10);
     }
-
+    
     if (p=='X') {
         // normally value = 0x0F;
         // we set the PA_BOOST pin
@@ -3274,6 +3339,8 @@ int8_t SX1272::getSNR()
     { // LoRa mode
         state = 1;
         value = readRegister(REG_PKT_SNR_VALUE);
+        _rawSNR = value;
+
         if( value & 0x80 ) // The SNR sign bit is 1
         {
             // Invert and divide by 4
@@ -3329,8 +3396,8 @@ uint8_t SX1272::getRSSI()
         for(int i = 0; i < total; i++)
         {
             // modified by C. Pham
-            // with SX1276 we have to add 20 to OFFSET_RSSI
-            _RSSI = -(OFFSET_RSSI+(_board==SX1276Chip?20:0)) + readRegister(REG_RSSI_VALUE_LORA);
+            // with SX1276 we have to add 18 to OFFSET_RSSI to obtain -157
+            _RSSI = -(OFFSET_RSSI+(_board==SX1276Chip?18:0)) + readRegister(REG_RSSI_VALUE_LORA);
             rssi_mean += _RSSI;
         }
 
@@ -3401,14 +3468,16 @@ int16_t SX1272::getRSSIpacket()
                 //_RSSIpacket = -NOISE_ABSOLUTE_ZERO + 10.0 * SignalBwLog[_bandwidth] + NOISE_FIGURE + ( double )_SNR;
 
                 // added by C. Pham, using Semtech SX1272 rev3 March 2015
-                _RSSIpacket = -(OFFSET_RSSI+(_board==SX1276Chip?20:0)) + (double)_RSSIpacket + (double)_SNR*0.25;
+                // for SX1272 we use -139, for SX1276, we use -157
+                // then for SX1276 when using low-frequency (i.e. 433MHz) then we use -164
+                _RSSIpacket = -(OFFSET_RSSI+(_board==SX1276Chip?18:0)+(_channel<CH_04_868?7:0)) + (double)_RSSIpacket + (double)_rawSNR*0.25;
                 state = 0;
             }
             else
             {
                 // commented by C. Pham
                 //_RSSIpacket = readRegister(REG_PKT_RSSI_VALUE);
-                _RSSIpacket = -(OFFSET_RSSI+(_board==SX1276Chip?20:0)) + (double)_RSSIpacket;
+                _RSSIpacket = -(OFFSET_RSSI+(_board==SX1276Chip?18:0)+(_channel<CH_04_868?7:0)) + (double)_RSSIpacket;
                 //end
                 state = 0;
             }
@@ -3744,10 +3813,21 @@ uint8_t SX1272::setACK()
 {
     uint8_t state = 2;
 
-    //#if (SX1272_debug_mode > 1)
+#if (SX1272_debug_mode > 1)
     Serial.println();
     Serial.println(F("Starting 'setACK'"));
-    //#endif
+#endif
+
+    // added by C. Pham
+    // check for enough remaining ToA
+    // when operating under duty-cycle mode
+    if (_limitToA) {
+        if (getRemainingToA() - getToA(ACK_LENGTH) < 0) {
+            Serial.print(F("## not enough ToA for ACK at"));
+            Serial.println(millis());
+            return SX1272_ERROR_TOA;
+        }
+    }
 
     // delay(1000);
 
@@ -3937,7 +4017,7 @@ uint8_t SX1272::receivePacketTimeout(uint16_t wait)
 
 #if (SX1272_debug_mode > 1)
     Serial.println();
-    Serial.println(F("Starting 'receivePacketTimeoutACK'"));
+    Serial.println(F("Starting 'receivePacketTimeout'"));
 #endif
 
     state = receive();
@@ -4004,7 +4084,8 @@ uint8_t SX1272::receivePacketTimeout(uint16_t wait)
     }
     else
     {
-        state_f = 1;
+        // we need to conserve state_f=3 to indicate that no packet has been received after timeout
+        //state_f = 1;
     }
     return state_f;
 }
@@ -4077,6 +4158,8 @@ uint8_t SX1272::receivePacketTimeoutACK()
 */
 uint8_t SX1272::receivePacketTimeoutACK(uint16_t wait)
 {
+    // commented by C. Pham because not used
+    /*
     uint8_t state = 2;
     uint8_t state_f = 2;
 
@@ -4142,6 +4225,7 @@ uint8_t SX1272::receivePacketTimeoutACK(uint16_t wait)
         state_f = 1;
     }
     return state_f;
+    */
 }
 
 /*
@@ -4215,7 +4299,8 @@ boolean	SX1272::availableData(uint16_t wait)
     byte header = 0;
     boolean forme = false;
     boolean	_hreceived = false;
-    unsigned long previous;
+    //unsigned long previous;
+    unsigned long exitTime;
 
 
 #if (SX1272_debug_mode > 0)
@@ -4223,21 +4308,23 @@ boolean	SX1272::availableData(uint16_t wait)
     Serial.println(F("Starting 'availableData'"));
 #endif
 
-    previous = millis();
+    exitTime=millis()+(unsigned long)wait;
 
+    //previous = millis();
     if( _modem == LORA )
     { // LoRa mode
         value = readRegister(REG_IRQ_FLAGS);
         // Wait to ValidHeader interrupt
-        while( (bitRead(value, 4) == 0) && (millis() - previous < (unsigned long)wait) )
+        //while( (bitRead(value, 4) == 0) && (millis() - previous < (unsigned long)wait) )
+        while( (bitRead(value, 4) == 0) && (millis() < exitTime) )
         {
             yield();
             value = readRegister(REG_IRQ_FLAGS);
             // Condition to avoid an overflow (DO NOT REMOVE)
-            if( millis() < previous )
-            {
-                previous = millis();
-            }
+            //if( millis() < previous )
+            //{
+            //    previous = millis();
+            //}
         } // end while (millis)
 
         if( bitRead(value, 4) == 1 )
@@ -4249,18 +4336,20 @@ boolean	SX1272::availableData(uint16_t wait)
 
 #ifdef W_NET_KEY
             // actually, need to wait until 3 bytes have been received
-            while( (header < 3) && (millis() - previous < (unsigned long)wait) )
+            //while( (header < 3) && (millis() - previous < (unsigned long)wait) )
+            while( (header < 3) && (millis() < exitTime) )
 #else
-            while( (header == 0) && (millis() - previous < (unsigned long)wait) )
+            //while( (header == 0) && (millis() - previous < (unsigned long)wait) )
+            while( (header == 0) && (millis() < exitTime) )
 #endif
             { // Waiting to read first payload bytes from packet
                 yield();
                 header = readRegister(REG_FIFO_RX_BYTE_ADDR);
                 // Condition to avoid an overflow (DO NOT REMOVE)
-                if( millis() < previous )
-                {
-                    previous = millis();
-                }
+                //if( millis() < previous )
+                //{
+                //    previous = millis();
+                //}
             }
 
             if( header != 0 )
@@ -4290,15 +4379,17 @@ boolean	SX1272::availableData(uint16_t wait)
     { // FSK mode
         value = readRegister(REG_IRQ_FLAGS2);
         // Wait to Payload Ready interrupt
-        while( (bitRead(value, 2) == 0) && (millis() - previous < wait) )
+        //while( (bitRead(value, 2) == 0) && (millis() - previous < wait) )
+        while( (bitRead(value, 2) == 0) && (millis() < exitTime) )
         {
             value = readRegister(REG_IRQ_FLAGS2);
             // Condition to avoid an overflow (DO NOT REMOVE)
-            if( millis() < previous )
-            {
-                previous = millis();
-            }
+            //if( millis() < previous )
+            //{
+            //    previous = millis();
+            //}
         }// end while (millis)
+
         if( bitRead(value, 2) == 1 )	// something received
         {
             _hreceived = true;
@@ -4422,7 +4513,8 @@ int8_t SX1272::getPacket(uint16_t wait)
 {
     uint8_t state = 2;
     byte value = 0x00;
-    unsigned long previous;
+    //unsigned long previous;
+    unsigned long exitTime;
     boolean p_received = false;
 
 #if (SX1272_debug_mode > 0)
@@ -4430,19 +4522,21 @@ int8_t SX1272::getPacket(uint16_t wait)
     Serial.println(F("Starting 'getPacket'"));
 #endif
 
-    previous = millis();
+    //previous = millis();
+    exitTime = millis() + (unsigned long)wait;
     if( _modem == LORA )
     { // LoRa mode
         value = readRegister(REG_IRQ_FLAGS);
         // Wait until the packet is received (RxDone flag) or the timeout expires
-        while( (bitRead(value, 6) == 0) && (millis() - previous < (unsigned long)wait) )
+        //while( (bitRead(value, 6) == 0) && (millis() - previous < (unsigned long)wait) )
+        while( (bitRead(value, 6) == 0) && (millis() < exitTime) )
         {
             value = readRegister(REG_IRQ_FLAGS);
             // Condition to avoid an overflow (DO NOT REMOVE)
-            if( millis() < previous )
-            {
-                previous = millis();
-            }
+            //if( millis() < previous )
+            //{
+            //    previous = millis();
+            //}
         } // end while (millis)
 
         if( (bitRead(value, 6) == 1) && (bitRead(value, 5) == 0) )
@@ -4470,15 +4564,17 @@ int8_t SX1272::getPacket(uint16_t wait)
     else
     { // FSK mode
         value = readRegister(REG_IRQ_FLAGS2);
-        while( (bitRead(value, 2) == 0) && (millis() - previous < wait) )
+        //while( (bitRead(value, 2) == 0) && (millis() - previous < wait) )
+        while( (bitRead(value, 2) == 0) && (millis() < exitTime) )
         {
             value = readRegister(REG_IRQ_FLAGS2);
             // Condition to avoid an overflow (DO NOT REMOVE)
-            if( millis() < previous )
-            {
-                previous = millis();
-            }
+            //if( millis() < previous )
+            //{
+            //    previous = millis();
+            //}
         } // end while (millis)
+
         if( bitRead(value, 2) == 1 )
         { // packet received
             if( bitRead(value, 1) == 1 )
@@ -4709,6 +4805,12 @@ uint8_t SX1272::setTimeout()
 #endif
 
     state = 1;
+
+    // changed by C. Pham
+    // we always use MAX_TIMEOUT
+    _sendTime = MAX_TIMEOUT;
+
+    /*
     if( _modem == LORA )
     {
         switch(_spreadingFactor)
@@ -5028,7 +5130,9 @@ uint8_t SX1272::setTimeout()
         _sendTime = MAX_TIMEOUT;
     }
     delay = ((0.1*_sendTime) + 1);
-   _sendTime = (uint16_t) ((_sendTime * 1.2) + (rand()%delay));
+    _sendTime = (uint16_t) ((_sendTime * 1.2) + (rand()%delay));
+
+    */
 #if (SX1272_debug_mode > 1)
     Serial.print(F("Timeout to send/receive is: "));
     Serial.println(_sendTime, DEC);
@@ -5130,11 +5234,26 @@ uint8_t SX1272::setPacket(uint8_t dest, char *payload)
 {
     int8_t state = 2;
 
-
 #if (SX1272_debug_mode > 1)
     Serial.println();
     Serial.println(F("Starting 'setPacket'"));
 #endif
+
+    // added by C. Pham
+    // check for enough remaining ToA
+    // when operating under duty-cycle mode
+    if (_limitToA) {
+        uint16_t length16 = (uint16_t)strlen(payload);
+
+        if (!_rawFormat)
+            length16 = length16 + OFFSET_PAYLOADLENGTH;
+
+        if (getRemainingToA() - getToA(length16) < 0) {
+            Serial.print(F("## not enough ToA at "));
+            Serial.println(millis());
+            return SX1272_ERROR_TOA;
+        }
+    }
 
     clearFlags();	// Initializing flags
 
@@ -5265,6 +5384,24 @@ uint8_t SX1272::setPacket(uint8_t dest, uint8_t *payload)
     Serial.println();
     Serial.println(F("Starting 'setPacket'"));
 #endif
+
+    // added by C. Pham
+    // check for enough remaining ToA
+    // when operating under duty-cycle mode
+    if (_limitToA) {
+        // here truncPayload() should have been called before in
+        // sendPacketTimeout(uint8_t dest, uint8_t *payload, uint16_t length16)
+        uint16_t length16 = _payloadlength;
+
+        if (!_rawFormat)
+            length16 = length16 + OFFSET_PAYLOADLENGTH;
+
+        if (getRemainingToA() - getToA(length16) < 0) {
+            Serial.print(F("## not enough ToA at "));
+            Serial.println(millis());
+            return SX1272_ERROR_TOA;
+        }
+    }
 
     st0 = readRegister(REG_OP_MODE);	// Save the previous status
     clearFlags();	// Initializing flags
@@ -5416,7 +5553,8 @@ uint8_t SX1272::sendWithTimeout(uint16_t wait)
 {
     uint8_t state = 2;
     byte value = 0x00;
-    unsigned long previous;
+    //unsigned long previous;
+    unsigned long exitTime;
 
 #if (SX1272_debug_mode > 1)
     Serial.println();
@@ -5426,7 +5564,8 @@ uint8_t SX1272::sendWithTimeout(uint16_t wait)
     // clearFlags();	// Initializing flags
 
     // wait to TxDone flag
-    previous = millis();
+    //previous = millis();
+    exitTime = millis() + (unsigned long)wait;
     if( _modem == LORA )
     { // LoRa mode
         clearFlags();	// Initializing flags
@@ -5443,14 +5582,15 @@ uint8_t SX1272::sendWithTimeout(uint16_t wait)
 #endif
         value = readRegister(REG_IRQ_FLAGS);
         // Wait until the packet is sent (TX Done flag) or the timeout expires
-        while ((bitRead(value, 3) == 0) && (millis() - previous < wait))
+        //while ((bitRead(value, 3) == 0) && (millis() - previous < wait))
+        while ((bitRead(value, 3) == 0) && (millis() < exitTime))
         {
             value = readRegister(REG_IRQ_FLAGS);
             // Condition to avoid an overflow (DO NOT REMOVE)
-            if( millis() < previous )
-            {
-                previous = millis();
-            }
+            //if( millis() < previous )
+            //{
+            //    previous = millis();
+            //}
         }
         state = 1;
     }
@@ -5460,14 +5600,15 @@ uint8_t SX1272::sendWithTimeout(uint16_t wait)
 
         value = readRegister(REG_IRQ_FLAGS2);
         // Wait until the packet is sent (Packet Sent flag) or the timeout expires
-        while ((bitRead(value, 3) == 0) && (millis() - previous < wait))
+        //while ((bitRead(value, 3) == 0) && (millis() - previous < wait))
+        while ((bitRead(value, 3) == 0) && (millis() < exitTime))
         {
             value = readRegister(REG_IRQ_FLAGS2);
             // Condition to avoid an overflow (DO NOT REMOVE)
-            if( millis() < previous )
-            {
-                previous = millis();
-            }
+            //if( millis() < previous )
+            //{
+            //    previous = millis();
+            //}
         }
         state = 1;
     }
@@ -5478,6 +5619,10 @@ uint8_t SX1272::sendWithTimeout(uint16_t wait)
         Serial.println(F("## Packet successfully sent ##"));
         Serial.println();
 #endif
+        // added by C. Pham
+        // normally there should be enough remaing ToA as the test has been done earlier
+        if (_limitToA)
+            removeToA(_currentToA);
     }
     else
     {
@@ -5705,7 +5850,7 @@ uint8_t SX1272::sendPacketTimeoutACK(uint8_t dest, char *payload)
         }
         else
         {
-            state_f = 3;
+            state_f = SX1272_ERROR_ACK;
             // added by C. Pham
             Serial.println(F("no ACK"));
         }
@@ -5756,13 +5901,18 @@ uint8_t SX1272::sendPacketTimeoutACK(uint8_t dest, uint8_t *payload, uint16_t le
     }
     if( state == 0 )
     {
+        // added by C. Pham
+        Serial.println(F("wait for ACK"));
+
         if( availableData() )
         {
             state_f = getACK();	// Getting ACK
         }
         else
         {
-            state_f = 3;
+            state_f = SX1272_ERROR_ACK;
+            // added by C. Pham
+            Serial.println(F("no ACK"));
         }
     }
     else
@@ -5818,7 +5968,7 @@ uint8_t SX1272::sendPacketTimeoutACK(uint8_t dest, char *payload, uint16_t wait)
         }
         else
         {
-            state_f = 3;
+            state_f = SX1272_ERROR_ACK;
             // added by C. Pham
             Serial.println(F("no ACK"));
         }
@@ -5876,7 +6026,7 @@ uint8_t SX1272::sendPacketTimeoutACK(uint8_t dest, uint8_t *payload, uint16_t le
         }
         else
         {
-            state_f = 3;
+            state_f = SX1272_ERROR_ACK;
             // added by C. Pham
             Serial.println(F("no ACK"));
         }
@@ -5914,7 +6064,8 @@ uint8_t SX1272::getACK(uint16_t wait)
 {
     uint8_t state = 2;
     byte value = 0x00;
-    unsigned long previous;
+    //unsigned long previous;
+    unsigned long exitTime;
     boolean a_received = false;
 
     //#if (SX1272_debug_mode > 1)
@@ -5922,19 +6073,20 @@ uint8_t SX1272::getACK(uint16_t wait)
     Serial.println(F("Starting 'getACK'"));
     //#endif
 
-    previous = millis();
-
+    //previous = millis();
+    exitTime = millis()+(unsigned long)wait;
     if( _modem == LORA )
     { // LoRa mode
         value = readRegister(REG_IRQ_FLAGS);
         // Wait until the ACK is received (RxDone flag) or the timeout expires
-        while ((bitRead(value, 6) == 0) && (millis() - previous < wait))
+        //while ((bitRead(value, 6) == 0) && (millis() - previous < wait))
+        while ((bitRead(value, 6) == 0) && (millis() < exitTime))
         {
             value = readRegister(REG_IRQ_FLAGS);
-            if( millis() < previous )
-            {
-                previous = millis();
-            }
+            //if( millis() < previous )
+            //{
+            //    previous = millis();
+            //}
         }
         if( bitRead(value, 6) == 1 )
         { // ACK received
@@ -5951,13 +6103,14 @@ uint8_t SX1272::getACK(uint16_t wait)
     { // FSK mode
         value = readRegister(REG_IRQ_FLAGS2);
         // Wait until the packet is received (RxDone flag) or the timeout expires
-        while ((bitRead(value, 2) == 0) && (millis() - previous < wait))
+        //while ((bitRead(value, 2) == 0) && (millis() - previous < wait))
+        while ((bitRead(value, 2) == 0) && (millis() < exitTime))
         {
             value = readRegister(REG_IRQ_FLAGS2);
-            if( millis() < previous )
-            {
-                previous = millis();
-            }
+            //if( millis() < previous )
+            //{
+            //    previous = millis();
+            //}
         }
         if( bitRead(value, 2) == 1 )
         { // ACK received
@@ -6301,12 +6454,25 @@ uint8_t SX1272::doCAD(uint8_t counter)
 {
     uint8_t state = 2;
     byte value = 0x00;
-    unsigned long startCAD, endCAD, startDoCad, endDoCad, previous;
+    unsigned long startCAD, endCAD, startDoCad, endDoCad;
+    //unsigned long previous;
+    unsigned long exitTime;
     uint16_t wait = 100;
     bool failedCAD=false;
     uint8_t retryCAD = 3;
     uint8_t save_counter;
     byte st0;
+    int rssi_count=0;
+    int rssi_mean=0;
+    double bw=0.0;
+    bool hasRSSI=false;
+    unsigned long startRSSI=0;
+
+    bw=(_bandwidth==BW_125)?125e3:((_bandwidth==BW_250)?250e3:500e3);
+    // Symbol rate : time for one symbol (usecs)
+    double rs = bw / ( 1 << _spreadingFactor);
+    double ts = 1 / rs;
+    ts = ts * 1000000.0;
 
     st0 = readRegister(REG_OP_MODE);	// Save the previous status
 
@@ -6324,23 +6490,38 @@ uint8_t SX1272::doCAD(uint8_t counter)
 
         do {
 
-            // wait to CadDone flag
-            startCAD = previous = millis();
+            hasRSSI=false;
 
             clearFlags();	// Initializing flags
 
+            // wait to CadDone flag
+            // previous = millis();
+            startCAD = millis();
+            exitTime = millis()+(unsigned long)wait;
+
             writeRegister(REG_OP_MODE, LORA_CAD_MODE);  // LORA mode - Cad
+
+            startRSSI=micros();
 
             value = readRegister(REG_IRQ_FLAGS);
             // Wait until CAD ends (CAD Done flag) or the timeout expires
-            while ((bitRead(value, 2) == 0) && (millis() - previous < wait))
+            //while ((bitRead(value, 2) == 0) && (millis() - previous < wait))
+            while ((bitRead(value, 2) == 0) && (millis() < exitTime))
             {
+                // only one reading per CAD
+                if (micros()-startRSSI > ts+240 && !hasRSSI) {
+                    _RSSI = -(OFFSET_RSSI+(_board==SX1276Chip?18:0)) + readRegister(REG_RSSI_VALUE_LORA);
+                    rssi_mean += _RSSI;
+                    rssi_count++;
+                    hasRSSI=true;
+                }
+
                 value = readRegister(REG_IRQ_FLAGS);
                 // Condition to avoid an overflow (DO NOT REMOVE)
-                if( millis() < previous )
-                {
-                    previous = millis();
-                }
+                //if( millis() < previous )
+                //{
+                //    previous = millis();
+                //}
             }
             state = 1;
 
@@ -6349,11 +6530,11 @@ uint8_t SX1272::doCAD(uint8_t counter)
             if( bitRead(value, 2) == 1 )
             {
                 state = 0;	// CAD successfully performed
-#ifdef DEBUG_CAD
+#ifdef DEBUG_CAD				  
                 Serial.print(F("SX1272::CAD duration "));
                 Serial.println(endCAD-startCAD);
                 Serial.println(F("SX1272::CAD successfully performed"));
-#endif
+#endif				  
 
                 value = readRegister(REG_IRQ_FLAGS);
 
@@ -6362,20 +6543,20 @@ uint8_t SX1272::doCAD(uint8_t counter)
                 {
                     // we detected activity
                     failedCAD=true;
-#ifdef DEBUG_CAD
+#ifdef DEBUG_CAD				  		
                     Serial.print(F("SX1272::CAD exits after "));
                     Serial.println(save_counter-counter);
-#endif
+#endif				  		
                 }
 
                 counter--;
             }
             else
             {
-#ifdef DEBUG_CAD
+#ifdef DEBUG_CAD			  	 	
                 Serial.print(F("SX1272::CAD duration "));
                 Serial.println(endCAD-startCAD);
-#endif
+#endif				  
                 if( state == 1 )
                 {
 #ifdef DEBUG_CAD
@@ -6397,6 +6578,9 @@ uint8_t SX1272::doCAD(uint8_t counter)
             }
 
         } while (counter && !failedCAD);
+
+        rssi_mean = rssi_mean / rssi_count;
+        _RSSI = rssi_mean;
     }
 
     writeRegister(REG_OP_MODE, st0);
@@ -6405,7 +6589,7 @@ uint8_t SX1272::doCAD(uint8_t counter)
 
     clearFlags();		// Initializing flags
 
-#ifdef DEBUG_CAD
+#ifdef DEBUG_CAD	  
     Serial.print(F("SX1272::doCAD duration "));
     Serial.println(endDoCad-startDoCad);
 #endif
@@ -6482,7 +6666,7 @@ uint16_t SX1272::getToA(uint8_t pl) {
     // must add 4 to the programmed preamble length to get the effective preamble length
     double tPreamble=((_preamblelength+4)+4.25)*ts;
 
-#ifdef DEBUG_GETTOA
+#ifdef DEBUG_GETTOA	
     Serial.print(F("SX1272::ts is "));
     printDouble(ts,6);
     Serial.println();
@@ -6499,7 +6683,7 @@ uint16_t SX1272::getToA(uint8_t pl) {
     double tmp = (8*pl - 4*_spreadingFactor + 28 + 16 - 20*_header) /
             (double)(4*(_spreadingFactor-2*DE) );
 
-#ifdef DEBUG_GETTOA
+#ifdef DEBUG_GETTOA                         
     Serial.print(F("SX1272::tmp is "));
     printDouble(tmp,6);
     Serial.println();
@@ -6509,7 +6693,7 @@ uint16_t SX1272::getToA(uint8_t pl) {
 
     double nPayload = 8 + ( ( tmp > 0 ) ? tmp : 0 );
 
-#ifdef DEBUG_GETTOA
+#ifdef DEBUG_GETTOA    
     Serial.print(F("SX1272::nPayload is "));
     Serial.println(nPayload);
 #endif
@@ -6522,12 +6706,13 @@ uint16_t SX1272::getToA(uint8_t pl) {
 
     //////
 
-#ifdef DEBUG_GETTOA
+#ifdef DEBUG_GETTOA    
     Serial.print(F("SX1272::airTime is "));
     Serial.println(airTime);
 #endif
     // return in ms
-    return ceil(airTime/1000)+1;
+    _currentToA=ceil(airTime/1000)+1;
+    return _currentToA;
 }
 
 // need to set _send_cad_number to a value > 0
@@ -6749,21 +6934,179 @@ int8_t SX1272::setSleepMode() {
     byte value;
 
     writeRegister(REG_OP_MODE, LORA_STANDBY_MODE);
+    // proposed by escyes
+    // https://github.com/CongducPham/LowCostLoRaGw/issues/53#issuecomment-289237532
+    //
+    // inserted to avoid REG_OP_MODE stay = 0x40 (no sleep mode)
+    delay(100);
     writeRegister(REG_OP_MODE, LORA_SLEEP_MODE);    // LoRa sleep mode
-
+	
 	//delay(50);
-
+	
     value = readRegister(REG_OP_MODE);
 
 	//Serial.print(F("## REG_OP_MODE 0x"));
 	//Serial.println(value, HEX);
-
+	
     if (value == LORA_SLEEP_MODE)
         state=0;
     else
         state=1;
 
     return state;
+}
+
+int8_t SX1272::setPowerDBM(uint8_t dbm) {
+    byte st0;
+    int8_t state = 2;
+    byte value = 0x00;
+
+    byte RegPaDacReg=(_board==SX1272Chip)?0x5A:0x4D;
+
+#if (SX1272_debug_mode > 1)
+    Serial.println();
+    Serial.println(F("Starting 'setPowerDBM'"));
+#endif
+
+    st0 = readRegister(REG_OP_MODE);	  // Save the previous status
+    if( _modem == LORA )
+    { // LoRa Stdby mode to write in registers
+        writeRegister(REG_OP_MODE, LORA_STANDBY_MODE);
+    }
+    else
+    { // FSK Stdby mode to write in registers
+        writeRegister(REG_OP_MODE, FSK_STANDBY_MODE);
+    }
+
+	if (dbm == 20) {
+		return setPower('X');
+	}
+	
+    if (dbm > 14)
+        return state;
+      	
+	// disable high power output in all other cases
+	writeRegister(RegPaDacReg, 0x84);
+
+    if (dbm > 10)
+        // set RegOcp for OcpOn and OcpTrim
+        // 130mA
+        setMaxCurrent(0x10);
+    else
+        // 100mA
+        setMaxCurrent(0x0B);
+
+    if (_board==SX1272Chip) {
+        // Pout = -1 + _power[3:0] on RFO
+        // Pout = 2 + _power[3:0] on PA_BOOST
+        if (_needPABOOST) {
+            value = dbm - 2;
+            // we set the PA_BOOST pin
+            value = value | B10000000;
+        }
+        else
+            value = dbm + 1;
+
+        writeRegister(REG_PA_CONFIG, value);	// Setting output power value
+    }
+    else {
+        // for the SX1276
+        uint8_t pmax=15;
+
+        // then Pout = Pmax-(15-_power[3:0]) if  PaSelect=0 (RFO pin for +14dBm)
+        // so L=3dBm; H=7dBm; M=15dBm (but should be limited to 14dBm by RFO pin)
+
+        // and Pout = 17-(15-_power[3:0]) if  PaSelect=1 (PA_BOOST pin for +14dBm)
+        // so x= 14dBm (PA);
+        // when p=='X' for 20dBm, value is 0x0F and RegPaDacReg=0x87 so 20dBm is enabled
+
+        if (_needPABOOST) {
+            value = dbm - 17 + 15;
+            // we set the PA_BOOST pin
+            value = value | B10000000;
+        }
+        else
+            value = dbm - pmax + 15;
+
+        // set MaxPower to 7 -> Pmax=10.8+0.6*MaxPower [dBm] = 15
+        value = value | B01110000;
+
+        writeRegister(REG_PA_CONFIG, value);
+    }
+
+    _power=value;
+
+    value = readRegister(REG_PA_CONFIG);
+
+    if( value == _power )
+    {
+        state = 0;
+#if (SX1272_debug_mode > 1)
+        Serial.println(F("## Output power has been successfully set ##"));
+        Serial.println();
+#endif
+    }
+    else
+    {
+        state = 1;
+    }
+
+    writeRegister(REG_OP_MODE, st0);	// Getting back to previous status
+    delay(100);
+    return state;
+}
+
+long SX1272::limitToA() {
+
+    // first time we set limitToA?
+    // in this design, once you set _limitToA to true
+    // it is not possible to set it back to false
+    if (_limitToA==false) {
+        _startToAcycle=millis();
+        _remainingToA=MAX_DUTY_CYCLE_PER_HOUR;
+        // we are handling millis() rollover by calculating the end of cycle time
+        _endToAcycle=_startToAcycle+DUTYCYCLE_DURATION;
+    }
+
+    _limitToA=true;
+    return getRemainingToA();
+}
+
+long SX1272::getRemainingToA() {
+
+    if (_limitToA==false)
+        return MAX_DUTY_CYCLE_PER_HOUR;
+
+    // we compare to the end of cycle so that millis() rollover is taken into account
+    // using unsigned long modulo operation
+    if ( (millis() > _endToAcycle ) ) {
+        _startToAcycle=_endToAcycle;
+        _remainingToA=MAX_DUTY_CYCLE_PER_HOUR;
+        _endToAcycle=_startToAcycle+DUTYCYCLE_DURATION;
+
+        Serial.println(F("## new cycle for ToA ##"));
+        Serial.print(F("cycle begins at "));
+        Serial.print(_startToAcycle);
+        Serial.print(F(" cycle ends at "));
+        Serial.print(_endToAcycle);
+        Serial.print(F(" remaining ToA is "));
+        Serial.print(_remainingToA);
+        Serial.println();
+    }
+
+    return _remainingToA;
+}
+
+long SX1272::removeToA(uint16_t toa) {
+
+    // first, update _remainingToA
+    getRemainingToA();
+
+    if (_limitToA) {
+        _remainingToA-=toa;
+    }
+
+    return _remainingToA;
 }
 
 SX1272 sx1272 = SX1272();
