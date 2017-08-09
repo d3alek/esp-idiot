@@ -60,7 +60,7 @@
 #define SX1276Chip  1
 // end
 
-#define SX1272_debug_mode 1
+#define SX1272_debug_mode 0
 
 //! MACROS //
 #define bitRead(value, bit) (((value) >> (bit)) & 0x01)  // read a bit

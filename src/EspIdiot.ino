@@ -54,13 +54,18 @@
 #include <SPI.h>
 
 #define RADIO_RFM92_95
-#define BAND900
+#define BAND868
 
 // lora gateway
 #define GATEWAY_ADDR 1
 
+int uspeshen = 0;
+int neuspeshen = 0;
+
+#define W_REQUESTED_ACK
+
 // lora slave
-#define LORA_MODE  1
+#define LORA_MODE  11
 #define SLAVE_ADDR 5
 
 #define I2C_PIN_SDA 4
@@ -73,7 +78,9 @@
 #define MAX_READ_SENSES_RESULT_SIZE 512
 #define DELTA_WAIT_SECONDS 2
 #define WIFI_WAIT_SECONDS 5
-#define COOL_OFF_WAIT_SECONDS 1
+
+#define COOL_OFF_WAIT_SECONDS 0
+
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
@@ -479,18 +486,22 @@ void loop(void)
             error = sx1272.setHeaderON();
             printReturnCode("setHeaderON()", error);
 
-            error = sx1272.setChannel(CH_05_900);
-            printReturnCode("setChannel(CH_05_900)", error);
+            error = sx1272.setChannel(CH_16_868);
+            printReturnCode("setChannel(CH_16_868)", error);
 
             error = sx1272.setPower('x');
             printReturnCode("setPower('x')", error);
 
+            error = sx1272.setCRC_ON();
+            printReturnCode("setCRC_ON()", error);
+
             error = sx1272.setNodeAddress(GATEWAY_ADDR);
             printReturnCode("setNodeAddress(GATEWAY_ADDR)", error);
+
             toState(listen_lora);
         }
         else {
-            // LoRa slave based on 
+            // LoRa slave based on
             // https://github.com/marciolm/EspComLoRa/blob/master/EspComLora_Simple_temp_deepsleep/EspComLora_Simple_temp_deepsleep.ino
             Serial.println("LoRa slave");
             error = sx1272.ON();
@@ -500,15 +511,18 @@ void loop(void)
             printReturnCode("setMode(LORA_MODE)", error);
 
             // sx1272._enableCarrierSense=true; // dunno what this is
-            error = sx1272.setChannel(CH_05_900);
-            printReturnCode("setChannel(CH_05_900)", error);
+            error = sx1272.setChannel(CH_16_868);
+            printReturnCode("setChannel(CH_16_868)", error);
 
             error = sx1272.setPower('x');
             printReturnCode("setPower('x')", error);
 
+            error = sx1272.setCRC_ON();
+            printReturnCode("setCRC_ON()", error);
+
             error = sx1272.setNodeAddress(SLAVE_ADDR);
             printReturnCode("setNodeAddress(SLAVE_ADDR)", error);
- 
+
             toState(send_lora);
         }
     }
@@ -520,34 +534,46 @@ void loop(void)
             for (unsigned int i = 0; i < sx1272.packet_received.length; i++) {
                 packet[i] = (char)sx1272.packet_received.data[i];
             }
-            Serial.printf("? packet is %s\n", packet);
+            uspeshen ++;
             led.blink_fast(3);
             error = sx1272.getRSSI();
             printReturnCode("getRSSI", error);
             error = sx1272.getRSSIpacket();
             printReturnCode("getRSSIpacket", error);
+            error = sx1272.getSNR();
+            printReturnCode("getSNR", error);
             display.print_on_refresh(0, String("RSSI ") + sx1272._RSSI);
             display.print_on_refresh(1, String("RSSIpacket ") + sx1272._RSSIpacket);
+            display.print_on_refresh(2, String("SNR ") + sx1272._SNR);
+            display.print_on_refresh(4, packet);
         }
         else {
+            neuspeshen ++;
             display.print_on_refresh(0, "No packet received.");
             led.blink_slow(1);
         }
+        display.print_on_refresh(3, uspeshen + String("/") + neuspeshen);
+
         toState(publish);
     }
     else if (state == send_lora) {
         sx1272.setPacketType(PKT_TYPE_DATA);
-        char message[] = "Hello gateway!";
-        int error = sx1272.sendPacketTimeout(GATEWAY_ADDR, message);
-        printReturnCode("sendPacketTimeout", error);
+        //sx1272.setPacketType(PKT_FLAG_ACK_REQ);
+        char message[100] = "hello gw!";
+        int error = sx1272.sendPacketTimeoutACK(GATEWAY_ADDR , message);
+        printReturnCode("sendPacketTimeoutACK", error);
         if (error == 0) {
             led.blink_fast(3);
-            error = sx1272.getRSSI();
+            /*error = sx1272.getRSSI();
             printReturnCode("getRSSI", error);
             error = sx1272.getRSSIpacket();
             printReturnCode("getRSSIpacket", error);
+            error = sx1272.getSNR();
+            printReturnCode("getSNR", error);
             display.print_on_refresh(0, String("RSSI ") + sx1272._RSSI);
             display.print_on_refresh(1, String("RSSIpacket ") + sx1272._RSSIpacket);
+            display.print_on_refresh(2, String("SNR ") + sx1272._SNR);
+            */
         }
         else {
             led.blink_slow(1);
