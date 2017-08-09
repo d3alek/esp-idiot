@@ -1,7 +1,8 @@
 #include "EspControl.h"
 
 void IdiotEspControl::deepSleep(int seconds) {
-  ESP.deepSleep(seconds*1000000, WAKE_RF_DEFAULT);
+    Serial.printf("Going to sleep for %d seconds\n", seconds);
+    ESP.deepSleep(seconds*1000000, WAKE_RF_DEFAULT);
 }
 
 void IdiotEspControl::restart() {

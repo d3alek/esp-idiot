@@ -17,6 +17,7 @@
         STATE(publish) \
         STATE(ota_update)    \
         STATE(cool_off)  \
+        STATE(deep_sleep)  \
         STATE(hard_reset)  \
 
 #define GENERATE_ENUM(ENUM) ENUM,

@@ -1,6 +1,8 @@
-#define VERSION "z2v0.4"
+#define VERSION "z2v0.5"
 
 #include <Arduino.h>
+
+ADC_MODE(ADC_VCC); // necessary for ESP.getVcc() to work
 
 #include <ESP8266WiFi.h>
 
@@ -50,13 +52,13 @@
 
 #include "Sense.h"
 
+// lora specific
 #include "SX1272.h"
 #include <SPI.h>
 
 #define RADIO_RFM92_95
 #define BAND868
 
-// lora gateway
 #define GATEWAY_ADDR 1
 
 int uspeshen = 0;
@@ -64,12 +66,13 @@ int neuspeshen = 0;
 
 #define W_REQUESTED_ACK
 
-// lora slave
 #define LORA_MODE  11
 #define SLAVE_ADDR 5
 
 #define I2C_PIN_SDA 4
 #define I2C_PIN_SCL 5
+
+// constants
 
 #define HARD_RESET_PIN 0
 
@@ -88,6 +91,8 @@ int neuspeshen = 0;
 
 #define SENSE_EXPECTATIONS_WINDOW 10
 
+// global variables
+
 const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
@@ -101,6 +106,7 @@ char updateResultTopic[30];
 bool configChanged = false;
 bool configReceived = false;
 bool gpioStateChanged = false;
+int sleep_seconds = 0;
 
 state_enum state = boot;
 
@@ -134,6 +140,7 @@ unsigned long boot_time = -1;
 #include <Led.h>
 Led led(2); // built-in led
 
+// auto reset on loop freeze
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
 Ticker tickerOSWatch;
@@ -149,6 +156,8 @@ void ICACHE_RAM_ATTR osWatch(void) {
     ESP.reset();  // hard reset
   }
 }
+
+// function definitions
 
 void toState(state_enum newState) {
   if (state == newState) {
@@ -327,6 +336,8 @@ void loop(void)
         dht22Pin = -1;
         oneWirePin = DEFAULT_ONE_WIRE_PIN;
 
+        sleep_seconds = 0;
+
         if (!PersistentStore.wifiCredentialsStored()) {
             toState(serve_locally);
             serveLocallySeconds = 60;
@@ -446,7 +457,7 @@ void loop(void)
             toState(update_config);
         }
         else {
-            toState(setup_lora);
+            toState(read_senses);
         }
     }
     else if (state == update_config) {
@@ -469,8 +480,30 @@ void loop(void)
             if (configChanged) {
                 saveConfig();
             }
-            toState(setup_lora);
+            toState(read_senses);
         }
+    }
+    else if (state == read_senses) {
+        StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
+        // parseObject and print the same char array do not play well, so pass it a copy here
+        JsonObject& senses = jsonBuffer.createObject();
+
+        int vcc = ESP.getVcc();
+        senses["vcc"] = vcc;
+
+        char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+        strcpy(readSensesResultCopy, readSensesResult);
+        enrichSenses(senses, readSensesResultCopy);
+        validate(senses);
+
+        updateExpectations(senses);
+
+        senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
+        Serial.printf("[result]\n%s\n", readSensesResult);
+
+        doActions(senses);
+
+        toState(setup_lora);
     }
     else if (state == setup_lora) {
         int error;
@@ -597,15 +630,18 @@ void loop(void)
                 Serial.println("!!! failed to publish");
                 mqttClient.disconnect();
             }
-
-            toState(cool_off);
         }
         else {
             Serial.println("? MQTT not connected so skip publishing.");
-            toState(cool_off);
         }
+
+        toState(cool_off);
     }
     else if (state == cool_off) {
+        if (sleep_seconds > 0) {
+            toState(deep_sleep);
+            return;
+        }
         if (coolOffStartTime == 0) {
             coolOffStartTime = millis();
         }
@@ -616,6 +652,9 @@ void loop(void)
         else {
             toState(boot);
         }
+    }
+    else if (state == deep_sleep) {
+        EspControl.deepSleep(sleep_seconds); 
     }
 }
 
@@ -935,6 +974,10 @@ void loadConfigFromJson(JsonObject& config, bool from_server) {
             lora_gateway = false;
         }
     }
+    if (config.containsKey("sleep")) {
+        configChanged = true;
+        sleep_seconds = config["sleep"]; 
+    }
     if (config.containsKey("gpio")) {
         configChanged = true;
         loadGpioConfig(config["gpio"]);
@@ -1036,6 +1079,8 @@ void injectConfig(JsonObject& config) {
   injectGpioMode(mode);
 
   config["lora"] = lora_gateway ? "gateway" : "slave";
+
+  config["sleep"] = sleep_seconds;
 }
 
 void saveConfig() {
