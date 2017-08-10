@@ -56,17 +56,10 @@ ADC_MODE(ADC_VCC); // necessary for ESP.getVcc() to work
 #include "SX1272.h"
 #include <SPI.h>
 
-#define SX1272_SS 15
-
-#define RADIO_RFM92_95
-#define BAND868
-
 #define GATEWAY_ADDR 1
 
 int uspeshen = 0;
 int neuspeshen = 0;
-
-#define W_REQUESTED_ACK
 
 #define LORA_MODE  11
 #define SLAVE_ADDR 5

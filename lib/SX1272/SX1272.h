@@ -52,6 +52,8 @@
 #if defined ARDUINO_AVR_PRO || defined ARDUINO_AVR_NANO || defined ARDUINO_AVR_MICRO || defined ARDUINO_AVR_MINI \
 || defined __MK20DX256__ || defined __MKL26Z64__
 #define SX1272_SS 10
+#elif defined ESP8266
+#define SX1272_SS 15
 #elif defined ARDUINO_AVR_FEATHER32U4 || defined ARDUINO_SAMD_FEATHER_M0
 // on the Adafruit Feather, the RFM95W is embeded and CS pin is normally on pin 8
 #define SX1272_SS 8
