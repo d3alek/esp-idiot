@@ -53,6 +53,9 @@ ADC_MODE(ADC_VCC); // necessary for ESP.getVcc() to work
 #include "Sense.h"
 
 // lora specific
+
+#define ESP8266
+
 #include "SX1272.h"
 #include <SPI.h>
 
@@ -649,7 +652,7 @@ void loop(void)
         }
     }
     else if (state == deep_sleep) {
-        EspControl.deepSleep(sleep_seconds); 
+        EspControl.deepSleep(sleep_seconds);
     }
 }
 
@@ -971,7 +974,7 @@ void loadConfigFromJson(JsonObject& config, bool from_server) {
     }
     if (config.containsKey("sleep")) {
         configChanged = true;
-        sleep_seconds = config["sleep"]; 
+        sleep_seconds = config["sleep"];
     }
     if (config.containsKey("gpio")) {
         configChanged = true;
