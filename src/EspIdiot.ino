@@ -1,4 +1,4 @@
-#define VERSION "z2v0.6"
+#define VERSION "z2v0.7"
 
 #include <Arduino.h>
 
@@ -53,8 +53,6 @@ ADC_MODE(ADC_VCC); // necessary for ESP.getVcc() to work
 #include "Sense.h"
 
 // lora specific
-
-#define ESP8266
 
 #include "SX1272.h"
 #include <SPI.h>
@@ -504,57 +502,35 @@ void loop(void)
         toState(setup_lora);
     }
     else if (state == setup_lora) {
-        int error;
+        int error = false;
+        int address = lora_gateway ? GATEWAY_ADDR: SLAVE_ADDR;
+
+        Serial.printf("? lora mode: %s, address: %d\n", (lora_gateway ? "gateway" : "slave"), address);
+
+        error = error 
+            || sx1272.ON() 
+            || sx1272.setMode(LORA_MODE)
+            || sx1272.setChannel(CH_16_868)
+            || sx1272.setPower('x')
+            || sx1272.setCRC_ON()
+            || sx1272.setNodeAddress(address);
+
         if (lora_gateway) {
-            Serial.println("LoRa gateway");
+            error = error || sx1272.setHeaderON();
 
-            error = sx1272.ON();
-            printReturnCode("ON", error);
-
-            error = sx1272.setMode(LORA_MODE);
-            printReturnCode("setMode(LORA_MODE)", error);
-
-            error = sx1272.setHeaderON();
-            printReturnCode("setHeaderON()", error);
-
-            error = sx1272.setChannel(CH_16_868);
-            printReturnCode("setChannel(CH_16_868)", error);
-
-            error = sx1272.setPower('x');
-            printReturnCode("setPower('x')", error);
-
-            error = sx1272.setCRC_ON();
-            printReturnCode("setCRC_ON()", error);
-
-            error = sx1272.setNodeAddress(GATEWAY_ADDR);
-            printReturnCode("setNodeAddress(GATEWAY_ADDR)", error);
-
-            toState(listen_lora);
+            if (!error) {
+                toState(listen_lora);
+            }
         }
         else {
-            // LoRa slave based on
-            // https://github.com/marciolm/EspComLoRa/blob/master/EspComLora_Simple_temp_deepsleep/EspComLora_Simple_temp_deepsleep.ino
-            Serial.println("LoRa slave");
-            error = sx1272.ON();
-            printReturnCode("ON", error);
-
-            error = sx1272.setMode(LORA_MODE);
-            printReturnCode("setMode(LORA_MODE)", error);
-
             // sx1272._enableCarrierSense=true; // dunno what this is
-            error = sx1272.setChannel(CH_16_868);
-            printReturnCode("setChannel(CH_16_868)", error);
-
-            error = sx1272.setPower('x');
-            printReturnCode("setPower('x')", error);
-
-            error = sx1272.setCRC_ON();
-            printReturnCode("setCRC_ON()", error);
-
-            error = sx1272.setNodeAddress(SLAVE_ADDR);
-            printReturnCode("setNodeAddress(SLAVE_ADDR)", error);
-
-            toState(send_lora);
+            if (!error) {
+                toState(send_lora);
+            }
+        }
+        if (error) {
+            Serial.println("! could not setup start lora module, skipping lora states");
+            toState(publish);
         }
     }
     else if (state == listen_lora) {

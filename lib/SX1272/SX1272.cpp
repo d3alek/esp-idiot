@@ -251,6 +251,7 @@ uint8_t SX1272::ON()
             _board = SX1276Chip;
         } else {
             Serial.println(F("Unrecognized transceiver"));
+            return 1;
         }
     }
     // end from single_chan_pkt_fwd by Thomas Telkamp
@@ -549,6 +550,7 @@ uint8_t SX1272::setLORA()
 
     // modified by C. Pham
     uint8_t retry=0;
+    int max_retry = 10;
 
     do {
         delay(200);
@@ -559,11 +561,7 @@ uint8_t SX1272::setLORA()
         st0 = readRegister(REG_OP_MODE);
         Serial.println(F("..."));
 
-        if ((retry % 2)==0)
-            if (retry==20)
-                retry=0;
-            else
-                retry++;
+        retry++;
         /*
         if (st0!=LORA_STANDBY_MODE) {
             pinMode(SX1272_RST,OUTPUT);
@@ -573,7 +571,7 @@ uint8_t SX1272::setLORA()
         }
         */
 
-    } while (st0!=LORA_STANDBY_MODE);	// LoRa standby mode
+    } while (retry < max_retry && st0!=LORA_STANDBY_MODE);	// LoRa standby mode
 
     if( st0 == LORA_STANDBY_MODE)
     { // LoRa mode
