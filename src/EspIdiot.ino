@@ -145,52 +145,53 @@ Ticker tickerOSWatch;
 static unsigned long last_loop;
 
 void ICACHE_RAM_ATTR osWatch(void) {
-  unsigned long t = millis();
-  unsigned long last_run = abs(t - last_loop);
-  if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
-    Serial.println("!!! osWatch: reset");
-    ESP.reset();  // hard reset
-  }
+    unsigned long t = millis();
+    unsigned long last_run = abs(t - last_loop);
+    if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
+        Serial.println("!!! osWatch: reset");
+        ESP.reset();  // hard reset
+    }
 }
 
 // function definitions
 
 void toState(state_enum newState) {
-  if (state == newState) {
-    return;
-  }
-  Serial.printf("\n[%s] -> [%s]\n", STATE_STRING[state], STATE_STRING[newState]);
+    if (state == newState) {
+        return;
+    }
+    Serial.printf("\n[%s] -> [%s]\n", STATE_STRING[state], STATE_STRING[newState]);
 
-  state = newState;
+    state = newState;
 }
 
 // A manual reset is needed after a Serial flash, otherwise this throws the ESP into oblivion
 // See https://github.com/esp8266/Arduino/issues/1722
 void updateFromS3(char* updatePath) {
-  toState(ota_update);
+    toState(ota_update);
+    display.refresh(state, true);
 
-  char updateUrl[100];
-  strcpy(updateUrl, UPDATE_URL);
-  strcat(updateUrl, updatePath);
-  Serial.printf("[starting OTA update] %s\n", updateUrl);
-  t_httpUpdate_return ret = ESPhttpUpdate.update(updateUrl);
+    char updateUrl[100];
+    strcpy(updateUrl, UPDATE_URL);
+    strcat(updateUrl, updatePath);
+    Serial.printf("[starting OTA update] %s\n", updateUrl);
+    t_httpUpdate_return ret = ESPhttpUpdate.update(updateUrl);
 
-  Serial.printf("OTA update finished: %d\n", ret);
-  switch(ret) {
-      case HTTP_UPDATE_FAILED:
-          Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
-          break;
+    Serial.printf("OTA update finished: %d\n", ret);
+    switch(ret) {
+        case HTTP_UPDATE_FAILED:
+            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+            break;
 
-      case HTTP_UPDATE_NO_UPDATES:
-          Serial.println("HTTP_UPDATE_NO_UPDATES");
-          break;
+        case HTTP_UPDATE_NO_UPDATES:
+            Serial.println("HTTP_UPDATE_NO_UPDATES");
+            break;
 
-      case HTTP_UPDATE_OK:
-          Serial.println("HTTP_UPDATE_OK");
-          break;
-  }
+        case HTTP_UPDATE_OK:
+            Serial.println("HTTP_UPDATE_OK");
+            break;
+    }
 
-  return;
+    return;
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -572,15 +573,15 @@ void loop(void)
         if (error == 0) {
             led.blink_fast(3);
             /*error = sx1272.getRSSI();
-            printReturnCode("getRSSI", error);
-            error = sx1272.getRSSIpacket();
-            printReturnCode("getRSSIpacket", error);
-            error = sx1272.getSNR();
-            printReturnCode("getSNR", error);
-            display.print_on_refresh(0, String("RSSI ") + sx1272._RSSI);
-            display.print_on_refresh(1, String("RSSIpacket ") + sx1272._RSSIpacket);
-            display.print_on_refresh(2, String("SNR ") + sx1272._SNR);
-            */
+              printReturnCode("getRSSI", error);
+              error = sx1272.getRSSIpacket();
+              printReturnCode("getRSSIpacket", error);
+              error = sx1272.getSNR();
+              printReturnCode("getSNR", error);
+              display.print_on_refresh(0, String("RSSI ") + sx1272._RSSI);
+              display.print_on_refresh(1, String("RSSIpacket ") + sx1272._RSSIpacket);
+              display.print_on_refresh(2, String("SNR ") + sx1272._SNR);
+             */
         }
         else {
             led.blink_slow(1);
@@ -861,13 +862,13 @@ void doActions(JsonObject& senses) {
 }
 
 void ensureGpio(int gpio, int state) {
-  if (digitalRead(gpio) != state) {
-    gpioStateChanged = true;
-    Serial.printf("? gpio %d to %d\n", gpio, state);
-    pinMode(gpio, OUTPUT);
-    digitalWrite(gpio, state);
-  }
-  GpioState.set(gpio, state);
+    if (digitalRead(gpio) != state) {
+        gpioStateChanged = true;
+        Serial.printf("? gpio %d to %d\n", gpio, state);
+        pinMode(gpio, OUTPUT);
+        digitalWrite(gpio, state);
+    }
+    GpioState.set(gpio, state);
 }
 
 void requestState() {
@@ -883,29 +884,29 @@ void requestState() {
 }
 
 bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObject) {
-  Serial.print("DHT ");
+    Serial.print("DHT ");
 
-  float temp_c, humidity;
+    float temp_c, humidity;
 
-  humidity = dht.readHumidity();          // Read humidity (percent)
-  temp_c = dht.readTemperature(false);     // Read temperature as Celsius
-  if (isnan(humidity) || isnan(temp_c)) {
-    Serial.print("fail ");
-    return false;
-  }
-  else {
-    Serial.println("OK");
-    Serial.print("Temperature: ");
-    Serial.println(temp_c);
-    Serial.print("Humidity: ");
-    Serial.println(humidity);
-    String sense = buildSenseKey(dhtType, "t");
-    jsonObject[sense] = temp_c;
-    sense = buildSenseKey(dhtType, "h");
-    jsonObject[sense] = humidity;
+    humidity = dht.readHumidity();          // Read humidity (percent)
+    temp_c = dht.readTemperature(false);     // Read temperature as Celsius
+    if (isnan(humidity) || isnan(temp_c)) {
+        Serial.print("fail ");
+        return false;
+    }
+    else {
+        Serial.println("OK");
+        Serial.print("Temperature: ");
+        Serial.println(temp_c);
+        Serial.print("Humidity: ");
+        Serial.println(humidity);
+        String sense = buildSenseKey(dhtType, "t");
+        jsonObject[sense] = temp_c;
+        sense = buildSenseKey(dhtType, "h");
+        jsonObject[sense] = humidity;
 
-    return true;
-  }
+        return true;
+    }
 }
 
 String buildSenseKey(const char* sensor, const char* readingName) {
@@ -913,15 +914,15 @@ String buildSenseKey(const char* sensor, const char* readingName) {
 }
 
 void loadConfig(char* string, bool from_server) {
-  StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
-  JsonObject& root = jsonBuffer.parseObject(string);
-  if (!root.success()) {
-    Serial.printf("!!! could not parse JSON from config string:\n%s\n[save valid config]\n", string);
-    saveConfig();
-    return;
-  }
+    StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
+    JsonObject& root = jsonBuffer.parseObject(string);
+    if (!root.success()) {
+        Serial.printf("!!! could not parse JSON from config string:\n%s\n[save valid config]\n", string);
+        saveConfig();
+        return;
+    }
 
-  loadConfigFromJson(root, from_server);
+    loadConfigFromJson(root, from_server);
 }
 
 void loadConfigFromJson(JsonObject& config, bool from_server) {
@@ -1011,111 +1012,111 @@ void loadActions(JsonArray& actionsJson) {
 }
 
 void loadGpioConfig(JsonObject& gpio) {
-  for (JsonObject::iterator it=gpio.begin(); it!=gpio.end(); ++it)
-  {
-    char pinBuffer[3];
-    const char* key = it->key;
-    int pinNumber = atoi(key);
-    makeDevicePinPairing(pinNumber, it->value.asString());
-  }
+    for (JsonObject::iterator it=gpio.begin(); it!=gpio.end(); ++it)
+    {
+        char pinBuffer[3];
+        const char* key = it->key;
+        int pinNumber = atoi(key);
+        makeDevicePinPairing(pinNumber, it->value.asString());
+    }
 }
 
 // make sure this is synced with injectConfig
 void makeDevicePinPairing(int pinNumber, const char* device) {
-  if (strcmp(device, "DHT11") == 0) {
-    dht11Pin = pinNumber;
-  }
-  else if (strcmp(device, "DHT22") == 0) {
-    dht22Pin = pinNumber;
-  }
-  else if (strcmp(device, "OneWire") == 0) {
-    oneWirePin = pinNumber;
-  }
+    if (strcmp(device, "DHT11") == 0) {
+        dht11Pin = pinNumber;
+    }
+    else if (strcmp(device, "DHT22") == 0) {
+        dht22Pin = pinNumber;
+    }
+    else if (strcmp(device, "OneWire") == 0) {
+        oneWirePin = pinNumber;
+    }
 }
 
 // make sure this is synced with makeDevicePinPairing
 void injectConfig(JsonObject& config) {
-  JsonObject& gpio = config.createNestedObject("gpio");
-  if (dht11Pin != -1) {
-    gpio.set(String(dht11Pin), "DHT11"); // this string conversion is necessary because otherwise ArduinoJson corrupts the key
-  }
-  if (dht22Pin != -1) {
-    gpio.set(String(dht22Pin), "DHT22");
-  }
-  if (oneWirePin != -1) {
-    gpio.set(String(oneWirePin), "OneWire");
-  }
+    JsonObject& gpio = config.createNestedObject("gpio");
+    if (dht11Pin != -1) {
+        gpio.set(String(dht11Pin), "DHT11"); // this string conversion is necessary because otherwise ArduinoJson corrupts the key
+    }
+    if (dht22Pin != -1) {
+        gpio.set(String(dht22Pin), "DHT22");
+    }
+    if (oneWirePin != -1) {
+        gpio.set(String(oneWirePin), "OneWire");
+    }
 
-  JsonArray& actions = config.createNestedArray("actions");
-  injectActions(actions);
+    JsonArray& actions = config.createNestedArray("actions");
+    injectActions(actions);
 
-  JsonObject& mode = config.createNestedObject("mode");
-  injectGpioMode(mode);
+    JsonObject& mode = config.createNestedObject("mode");
+    injectGpioMode(mode);
 
-  config["lora"] = lora_gateway ? "gateway" : "slave";
+    config["lora"] = lora_gateway ? "gateway" : "slave";
 
-  config["sleep"] = sleep_seconds;
+    config["sleep"] = sleep_seconds;
 }
 
 void saveConfig() {
-  StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
-  JsonObject& root = jsonBuffer.createObject();
+    StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
 
-  injectConfig(root);
+    injectConfig(root);
 
-  char configString[CONFIG_MAX_SIZE];
-  root.printTo(configString, CONFIG_MAX_SIZE);
-  Serial.printf("[save config]\n%s\n", configString);
-  PersistentStore.putConfig(configString);
+    char configString[CONFIG_MAX_SIZE];
+    root.printTo(configString, CONFIG_MAX_SIZE);
+    Serial.printf("[save config]\n%s\n", configString);
+    PersistentStore.putConfig(configString);
 }
 
 void injectActions(JsonArray& actionsJson) {
-  for (int i = 0; i < actionsSize; ++i) {
-    Action action = actions[i];
-    char action_string[50];
-    action.buildActionString(action_string);
-    actionsJson.add(String(action_string));
-  }
+    for (int i = 0; i < actionsSize; ++i) {
+        Action action = actions[i];
+        char action_string[50];
+        action.buildActionString(action_string);
+        actionsJson.add(String(action_string));
+    }
 }
 
 void buildStateString(char* stateJson) {
-  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
+    StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
 
-  JsonObject& root = jsonBuffer.createObject();
-  JsonObject& stateObject = root.createNestedObject("state");
-  JsonObject& reported = stateObject.createNestedObject("reported");
+    JsonObject& root = jsonBuffer.createObject();
+    JsonObject& stateObject = root.createNestedObject("state");
+    JsonObject& reported = stateObject.createNestedObject("reported");
 
-  reported["wifi"] = WiFi.SSID();
-  reported["state"] = STATE_STRING[state];
-  reported["version"] = VERSION;
-  reported["b"] = boot_time;
+    reported["wifi"] = WiFi.SSID();
+    reported["state"] = STATE_STRING[state];
+    reported["version"] = VERSION;
+    reported["b"] = boot_time;
 
-  JsonObject& gpio = reported.createNestedObject("write");
-  injectGpioState(gpio);
+    JsonObject& gpio = reported.createNestedObject("write");
+    injectGpioState(gpio);
 
-  JsonObject& config = reported.createNestedObject("config");
+    JsonObject& config = reported.createNestedObject("config");
 
-  injectConfig(config);
+    injectConfig(config);
 
-  StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
-  // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
-  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
-  strcpy(readSensesResultCopy, readSensesResult);
-  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
+    StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
+    // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
+    char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+    strcpy(readSensesResultCopy, readSensesResult);
+    reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
 
-  int actualLength = root.measureLength();
-  if (actualLength >= MAX_STATE_JSON_LENGTH) {
-    Serial.println("!!! resulting JSON is too long, expect errors");
-  }
+    int actualLength = root.measureLength();
+    if (actualLength >= MAX_STATE_JSON_LENGTH) {
+        Serial.println("!!! resulting JSON is too long, expect errors");
+    }
 
-  root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
-  return;
+    root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
+    return;
 }
 
 void injectGpioState(JsonObject& gpio) {
-  for (int i = 0; i < GpioState.getSize(); ++i) {
-    gpio[String(GpioState.getGpio(i))] = GpioState.getState(i);
-  }
+    for (int i = 0; i < GpioState.getSize(); ++i) {
+        gpio[String(GpioState.getGpio(i))] = GpioState.getState(i);
+    }
 }
 
 void injectGpioMode(JsonObject& mode) {
