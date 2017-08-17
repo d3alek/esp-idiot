@@ -1,4 +1,4 @@
-#define VERSION "z2v0.7"
+#define VERSION "z2v0.74"
 
 #include <Arduino.h>
 
@@ -54,6 +54,16 @@ ADC_MODE(ADC_VCC); // necessary for ESP.getVcc() to work
 
 // lora specific
 
+#ifdef ZELENIK1
+#define I2C_PIN_SDA 14
+#define I2C_PIN_SCL 12
+bool has_radio = false;
+#else
+#define I2C_PIN_SDA 4
+#define I2C_PIN_SCL 5
+bool has_radio = true;
+#endif
+
 #include "SX1272.h"
 #include <SPI.h>
 
@@ -64,9 +74,6 @@ int neuspeshen = 0;
 
 #define LORA_MODE  11
 #define SLAVE_ADDR 5
-
-#define I2C_PIN_SDA 4
-#define I2C_PIN_SCL 5
 
 // constants
 
@@ -126,6 +133,7 @@ unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
 
+#define DISPLAY_CONTROL_PIN 0
 OLED oled(I2C_PIN_SDA, I2C_PIN_SCL);
 DisplayController display(oled);
 
@@ -297,6 +305,7 @@ volatile unsigned long debounceDelay = 300;
 
 void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
     if (millis() - lastInterruptTime > debounceDelay) {
+        display.changePage();
         lastInterruptTime = millis();
     }
 }
@@ -313,6 +322,8 @@ void loop(void)
     }
 
     if (state == boot) {
+        pinMode(DISPLAY_CONTROL_PIN, INPUT);
+        attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
         configChanged = false;
         configReceived = false;
         gpioStateChanged = false;
@@ -500,7 +511,14 @@ void loop(void)
 
         doActions(senses);
 
-        toState(setup_lora);
+        display.update_senses(senses);
+
+        if (has_radio) {
+            toState(setup_lora);
+        }
+        else {
+            toState(publish);
+        }
     }
     else if (state == setup_lora) {
         int error = false;
@@ -572,16 +590,14 @@ void loop(void)
         printReturnCode("sendPacketTimeoutACK", error);
         if (error == 0) {
             led.blink_fast(3);
-            /*error = sx1272.getRSSI();
-              printReturnCode("getRSSI", error);
-              error = sx1272.getRSSIpacket();
-              printReturnCode("getRSSIpacket", error);
-              error = sx1272.getSNR();
-              printReturnCode("getSNR", error);
-              display.print_on_refresh(0, String("RSSI ") + sx1272._RSSI);
-              display.print_on_refresh(1, String("RSSIpacket ") + sx1272._RSSIpacket);
-              display.print_on_refresh(2, String("SNR ") + sx1272._SNR);
-             */
+            error = sx1272.getRSSI();
+            printReturnCode("getRSSI", error);
+            error = sx1272.getRSSIpacket();
+            printReturnCode("getRSSIpacket", error);
+            error = sx1272.getSNR();
+            printReturnCode("getSNR", error);
+
+            display.update_lora(sx1272._RSSI, sx1272._RSSIpacket, sx1272._SNR);
         }
         else {
             led.blink_slow(1);
@@ -614,6 +630,7 @@ void loop(void)
     }
     else if (state == cool_off) {
         if (sleep_seconds > 0) {
+            detachInterrupt(DISPLAY_CONTROL_PIN); 
             toState(deep_sleep);
             return;
         }
@@ -625,6 +642,7 @@ void loop(void)
             delay(100);
         }
         else {
+            detachInterrupt(DISPLAY_CONTROL_PIN); 
             toState(boot);
         }
     }

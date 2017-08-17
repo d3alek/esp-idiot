@@ -19,20 +19,23 @@ class DisplayController {
         void begin();
         void refresh(state_enum);
         void refresh(state_enum, bool);
-        void update(JsonObject&);
-        void changeMode();
+        void update_senses(JsonObject&);
+        void update_lora(int, int, int);
+        void changePage();
         void displayDetailed(int);
         void print_on_refresh(int line, String string);
         void print_on_refresh(int line, const char* string);
+        int getPagesCount();
 
         OLED oled;
         Displayable displayables[MAX_DISPLAYABLES];
         int displayables_size;
         int displayables_counter;
         unsigned long last_refresh_millis;
-        volatile int mode;
+        volatile int page;
         volatile bool changed;
         bool to_print;
         char to_print_lines[MAX_LINES][MAX_LINE_LENGTH];
+        int rssi, rssi_packet, snr;
 };
 #endif
