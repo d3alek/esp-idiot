@@ -76,6 +76,10 @@ byte local_address = GATEWAY_ADDR;
 volatile char lora_message[LORA_MESSAGE_SIZE];
 volatile char lora_message_from[10];
 
+#include <elapsedMillis.h>
+elapsedMillis state_ms; // milliseconds elapsed since state switch
+elapsedMillis button_pressed_ms; // milliseconds elapsed since button press
+
 // constants
 
 #define HARD_RESET_PIN 0
@@ -86,10 +90,10 @@ volatile char lora_message_from[10];
 #define DELTA_WAIT_SECONDS 2
 #define WIFI_WAIT_SECONDS 5
 
-#define COOL_OFF_WAIT_SECONDS 0
+#define CHILL_WAIT_SECONDS 5
 
 #define DEFAULT_PUBLISH_INTERVAL 60
-#define DEFAULT_SERVE_LOCALLY_SECONDS 2
+#define SERVE_LOCALLY_SECONDS 60
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
 
@@ -126,14 +130,6 @@ char finalState[MAX_STATE_JSON_LENGTH];
 Action actions[MAX_ACTIONS_SIZE];
 int actionsSize;
 
-
-unsigned long coolOffStartTime;
-unsigned long i2cPowerStartTime;
-unsigned long wifiWaitStartTime;
-unsigned long updateConfigStartTime;
-unsigned long serveLocallyStartMs;
-float serveLocallySeconds;
-
 #define DISPLAY_CONTROL_PIN 0
 OLED oled(I2C_PIN_SDA, I2C_PIN_SCL);
 DisplayController display(oled);
@@ -149,7 +145,7 @@ Led led(2); // built-in led
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
 Ticker tickerOSWatch;
-#define OSWATCH_RESET_TIME 30
+#define OSWATCH_RESET_TIME 10
 
 static unsigned long last_loop;
 
@@ -169,7 +165,7 @@ void toState(state_enum newState) {
         return;
     }
     Serial.printf("\n[%s] -> [%s]\n", STATE_STRING[state], STATE_STRING[newState]);
-
+    state_ms = 0;
     state = newState;
 }
 
@@ -316,9 +312,9 @@ volatile unsigned long lastInterruptTime = 0;
 volatile unsigned long debounceDelay = 300;
 
 void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
-    if (millis() - lastInterruptTime > debounceDelay) {
+    if (button_pressed_ms > debounceDelay) {
         display.changePage();
-        lastInterruptTime = millis();
+        button_pressed_ms = 0;
     }
 }
 
@@ -396,13 +392,6 @@ void loop(void)
         configReceived = false;
         gpioStateChanged = false;
 
-        coolOffStartTime = 0;
-        i2cPowerStartTime = 0;
-        updateConfigStartTime = 0;
-        wifiWaitStartTime = 0;
-
-        serveLocallyStartMs = 0;
-        serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
         actionsSize = 0;
 
         GpioState.clear();
@@ -417,8 +406,7 @@ void loop(void)
         local_address = lora_gateway ? GATEWAY_ADDR: SLAVE_ADDR;
 
         if (!PersistentStore.wifiCredentialsStored()) {
-            toState(serve_locally);
-            serveLocallySeconds = 60;
+            toState(start_server);
         }
         else {
             toState(connect_to_wifi);
@@ -426,20 +414,21 @@ void loop(void)
 
         return;
     }
+    else if (state == start_server) {
+        WiFi.disconnect();
+        WiFi.mode(WIFI_AP);
+        idiotWifiServer.start(uuid);
+        Serial.print("Serving locally for ");
+        Serial.print(SERVE_LOCALLY_SECONDS);
+        Serial.println(" seconds");
+        toState(serve_locally);
+    }
     else if (state == serve_locally) {
-        if (serveLocallyStartMs == 0) {
-            WiFi.disconnect();
-            WiFi.mode(WIFI_AP);
-            idiotWifiServer.start(uuid);
-            serveLocallyStartMs = millis();
-            Serial.print("Serving locally for ");
-            Serial.print(serveLocallySeconds);
-            Serial.println(" seconds");
-        }
-        else if (millis() - serveLocallyStartMs > serveLocallySeconds * 1000) {
+        if (state_ms > SERVE_LOCALLY_SECONDS * 1000) {
             toState(cool_off);
         }
         else {
+            Serial.print(".");
             delay(10);
         }
         return;
@@ -463,7 +452,6 @@ void loop(void)
             WiFi.begin(wifiName, wifiPassword);
         }
 
-        wifiWaitStartTime = millis();
         toState(wifi_wait);
         return;
     }
@@ -471,7 +459,7 @@ void loop(void)
         if (WiFi.status() == WL_CONNECTED) {
             toState(connect_to_internet);
         }
-        else if (millis() - wifiWaitStartTime > WIFI_WAIT_SECONDS * 1000){
+        else if (state_ms > WIFI_WAIT_SECONDS * 1000){
             Serial.println("\n? waited for wifi enough, continue without.");
             toState(load_config);
         }
@@ -523,7 +511,6 @@ void loop(void)
     else if (state == connect_to_mqtt) {
         mqttConnect();
         toState(load_config);
-        return;
     }
     else if (state == load_config) {
         char config[CONFIG_MAX_SIZE];
@@ -539,27 +526,24 @@ void loop(void)
         }
     }
     else if (state == update_config) {
-        if (updateConfigStartTime == 0) {
-            requestState();
-            updateConfigStartTime = millis();
-            configChanged = false;
-            configReceived = false;
-        }
-
-        if (!configReceived && millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
+        requestState();
+        configChanged = false;
+        configReceived = false;
+        toState(wait_for_config);
+    }
+    else if (state == wait_for_config) {
+        if (!configReceived && state_ms < DELTA_WAIT_SECONDS * 1000) {
             Serial.print('.');
             return;
         }
-        else {
-            if (!configReceived) {
-                // maybe server has problems or our connection to it has problems, disconnect to be sure
-                mqttClient.disconnect();
-            }
-            if (configChanged) {
-                saveConfig();
-            }
-            toState(read_senses);
+        if (!configReceived) {
+            // maybe server has problems or our connection to it has problems, disconnect to be sure
+            mqttClient.disconnect();
         }
+        if (configChanged) {
+            saveConfig();
+        }
+        toState(read_senses);
     }
     else if (state == read_senses) {
         StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
@@ -652,10 +636,10 @@ void loop(void)
             toState(deep_sleep);
             return;
         }
-        if (coolOffStartTime == 0) {
-            coolOffStartTime = millis();
-        }
-        else if (millis() - coolOffStartTime < COOL_OFF_WAIT_SECONDS * 1000) {
+        toState(chill);
+    }
+    else if (state == chill) {
+        if (state_ms < CHILL_WAIT_SECONDS * 1000) {
             Serial.print('.');
             delay(100);
         }
