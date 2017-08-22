@@ -1,4 +1,4 @@
-#define VERSION "z2v0.74"
+#define VERSION "z2v0.8"
 
 #include <Arduino.h>
 
@@ -64,16 +64,17 @@ bool has_radio = false;
 bool has_radio = true;
 #endif
 
-#include "SX1272.h"
+#include <LoRa.h>
 #include <SPI.h>
 
 #define GATEWAY_ADDR 1
-
-int uspeshen = 0;
-int neuspeshen = 0;
-
-#define LORA_MODE  11
 #define SLAVE_ADDR 5
+
+byte local_address = GATEWAY_ADDR;
+
+#define LORA_MESSAGE_SIZE 100
+volatile char lora_message[LORA_MESSAGE_SIZE];
+volatile char lora_message_from[10];
 
 // constants
 
@@ -298,6 +299,17 @@ void setup(void)
     if(!digitalRead(HARD_RESET_PIN)) {
         hardReset();
     }
+
+    if (has_radio) {
+        LoRa.setPins(15, 9, 2); // not sure about nreset 9
+        if (!LoRa.begin(915E6)) { // not sure about the frequency, saw in https://github.com/sandeepmistry/arduino-LoRa/blob/master/examples/LoRaSender/LoRaSender.ino
+            Serial.println("! starting LoRa failed - assuming no radio attached");
+            has_radio = false;
+        }
+    }
+
+    strcpy((char*)lora_message, "");
+    strcpy((char*)lora_message_from, "");
 }
 
 volatile unsigned long lastInterruptTime = 0;
@@ -308,6 +320,60 @@ void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
         display.changePage();
         lastInterruptTime = millis();
     }
+}
+
+void sendLoraMessage(byte destination, String outgoing) {
+  LoRa.beginPacket();                   // start packet
+  LoRa.write(destination);              // add destination address
+  LoRa.write(local_address);             // add sender address
+  LoRa.write(outgoing.length());        // add payload length
+  LoRa.print(outgoing);                 // add payload
+  LoRa.endPacket();                     // finish packet and send it
+}
+
+// adapted from https://github.com/sandeepmistry/arduino-LoRa/blob/master/examples/LoRaDuplex/LoRaDuplex.ino
+void ICACHE_RAM_ATTR onLoraReceive(int packetSize) {
+    if (packetSize == 0) return; // if there's no packet, return
+
+    // read packet header bytes:
+    int recipient = LoRa.read(); // recipient address
+    byte sender = LoRa.read(); // sender address
+    byte incomingLength = LoRa.read(); // incoming msg length
+    String incoming = "";
+
+    while (LoRa.available()) {
+        incoming += (char)LoRa.read();
+    }
+
+    if (incomingLength != incoming.length()) { // check length for error
+        Serial.println("! message length does not match length - skip message");
+        return; // skip rest of function
+    }
+
+    // if the recipient isn't this device or broadcast,
+    if (recipient != local_address && recipient != 0xFF) {
+        Serial.println("! this message is not for me.");
+        return; // skip rest of function
+    }
+
+    led.blink_fast(3);
+    display.update_lora(LoRa.packetRssi(), LoRa.packetSnr());
+    display.print_on_refresh(0, String("RSSI ") + LoRa.packetRssi());
+    display.print_on_refresh(2, String("SNR ") + LoRa.packetSnr());
+    display.print_on_refresh(4, incoming);
+    display.print_on_refresh(6, String("From 0x") + String(sender, HEX));
+
+    // if message is for this device, or broadcast, print details:
+    Serial.println("Received from: 0x" + String(sender, HEX));
+    Serial.println("Sent to: 0x" + String(recipient, HEX));
+    Serial.println("Message length: " + String(incomingLength));
+    Serial.println("Message: " + incoming);
+    Serial.println("RSSI: " + String(LoRa.packetRssi()));
+    Serial.println("Snr: " + String(LoRa.packetSnr()));
+    Serial.println();
+
+    strcpy((char*)lora_message, incoming.c_str());
+    strcpy((char*)lora_message_from, String(sender).c_str());
 }
 
 void loop(void)
@@ -498,6 +564,11 @@ void loop(void)
 
         int vcc = ESP.getVcc();
         senses["vcc"] = vcc;
+        if (strlen((char*)lora_message) > 0) {
+            senses[String((char*)lora_message_from)] = lora_message;
+            strcpy((char*)lora_message, "");
+            strcpy((char*)lora_message_from, "");
+        }
 
         char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
         strcpy(readSensesResultCopy, readSensesResult);
@@ -521,88 +592,38 @@ void loop(void)
         }
     }
     else if (state == setup_lora) {
-        int error = false;
-        int address = lora_gateway ? GATEWAY_ADDR: SLAVE_ADDR;
+        local_address = lora_gateway ? GATEWAY_ADDR: SLAVE_ADDR;
 
-        Serial.printf("? lora mode: %s, address: %d\n", (lora_gateway ? "gateway" : "slave"), address);
-
-        error = error 
-            || sx1272.ON() 
-            || sx1272.setMode(LORA_MODE)
-            || sx1272.setChannel(CH_16_868)
-            || sx1272.setPower('x')
-            || sx1272.setCRC_ON()
-            || sx1272.setNodeAddress(address);
+        Serial.printf("? lora mode: %s, address: %d\n", (lora_gateway ? "gateway" : "slave"), local_address);
+        
+        // documentation: https://github.com/sandeepmistry/arduino-LoRa/blob/master/API.md
+        LoRa.enableCrc();
+        // LoRa.setFrequency(866E6); // set in LoRa.begin()
+        // LoRa.setTxPower(17);
+        // LoRa.setSpreadingFactor(7);
+        // LoRa.setSignalBandwidth(125E3);
+        // LoRa.setCodingRate4(5);
+        // LoRa.setPreambleLength(8);
+        // LoRa.setSyncWord(0x34);
 
         if (lora_gateway) {
-            error = error || sx1272.setHeaderON();
-
-            if (!error) {
-                toState(listen_lora);
-            }
+            toState(listen_lora);
         }
         else {
-            // sx1272._enableCarrierSense=true; // dunno what this is
-            if (!error) {
-                toState(send_lora);
-            }
-        }
-        if (error) {
-            Serial.println("! could not setup start lora module, skipping lora states");
-            toState(publish);
+            toState(send_lora);
         }
     }
     else if (state == listen_lora) {
-        int error = sx1272.receivePacketTimeout(10000);
-        printReturnCode("receivePacketTimeout", error);
-        char packet[100];
-        if (error == 0) {
-            for (unsigned int i = 0; i < sx1272.packet_received.length; i++) {
-                packet[i] = (char)sx1272.packet_received.data[i];
-            }
-            uspeshen ++;
-            led.blink_fast(3);
-            error = sx1272.getRSSI();
-            printReturnCode("getRSSI", error);
-            error = sx1272.getRSSIpacket();
-            printReturnCode("getRSSIpacket", error);
-            error = sx1272.getSNR();
-            printReturnCode("getSNR", error);
-            display.print_on_refresh(0, String("RSSI ") + sx1272._RSSI);
-            display.print_on_refresh(1, String("RSSIpacket ") + sx1272._RSSIpacket);
-            display.print_on_refresh(2, String("SNR ") + sx1272._SNR);
-            display.print_on_refresh(4, packet);
-        }
-        else {
-            neuspeshen ++;
-            display.print_on_refresh(0, "No packet received.");
-            led.blink_slow(1);
-        }
-        display.print_on_refresh(3, uspeshen + String("/") + neuspeshen);
-
+        Serial.println("? continous receive mode");
+        LoRa.onReceive(onLoraReceive); 
+        LoRa.receive(); // continuous receive mode
         toState(publish);
     }
     else if (state == send_lora) {
-        sx1272.setPacketType(PKT_TYPE_DATA);
-        //sx1272.setPacketType(PKT_FLAG_ACK_REQ);
         char message[100] = "hello gw!";
-        int error = sx1272.sendPacketTimeoutACK(GATEWAY_ADDR , message);
-        printReturnCode("sendPacketTimeoutACK", error);
-        if (error == 0) {
-            led.blink_fast(3);
-            error = sx1272.getRSSI();
-            printReturnCode("getRSSI", error);
-            error = sx1272.getRSSIpacket();
-            printReturnCode("getRSSIpacket", error);
-            error = sx1272.getSNR();
-            printReturnCode("getSNR", error);
-
-            display.update_lora(sx1272._RSSI, sx1272._RSSIpacket, sx1272._SNR);
-        }
-        else {
-            led.blink_slow(1);
-            display.print_on_refresh(0, "Error sending packet");
-        }
+        
+        sendLoraMessage(GATEWAY_ADDR, String(message));
+        led.blink_fast(3);
 
         toState(publish);
     }
@@ -631,6 +652,7 @@ void loop(void)
     else if (state == cool_off) {
         if (sleep_seconds > 0) {
             detachInterrupt(DISPLAY_CONTROL_PIN); 
+            LoRa.sleep();
             toState(deep_sleep);
             return;
         }
@@ -649,10 +671,6 @@ void loop(void)
     else if (state == deep_sleep) {
         EspControl.deepSleep(sleep_seconds);
     }
-}
-
-void printReturnCode(const char* method, int error) {
-    Serial.printf("? %s %s\n", method, !error ? "successful" : "failed");
 }
 
 void enrichSenses(JsonObject& senses, char* previous_senses_string) {

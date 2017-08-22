@@ -9,7 +9,6 @@ DisplayController::DisplayController(OLED oled) {
     changed = true;
 
     rssi = -1;
-    rssi_packet = -1;
     snr = -1;
 
     to_print = false;
@@ -80,8 +79,7 @@ void DisplayController::refresh(state_enum state, bool force) {
     else if (page == 1) {
         print_on_refresh(0, "Zelenik LoRa");
         print_on_refresh(2, String("RSSI: ") + rssi);
-        print_on_refresh(4, String("RSSIpacket: ") + rssi_packet);
-        print_on_refresh(6, String("SNR: ") + snr);
+        print_on_refresh(4, String("SNR: ") + snr);
     }
     else if (page < pages) {
         displayDetailed(page-2);
@@ -128,11 +126,10 @@ void DisplayController::update_senses(JsonObject& senses) {
     changed = true;
 }
 
-void DisplayController::update_lora(int rssi, int rssi_packet, int snr) {
+void DisplayController::update_lora(int rssi, int snr) {
     Serial.println("[display updated lora]");
 
     this->rssi = rssi;
-    this->rssi_packet = rssi_packet;
     this->snr = snr;
 
     changed = true;

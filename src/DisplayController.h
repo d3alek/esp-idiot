@@ -20,7 +20,7 @@ class DisplayController {
         void refresh(state_enum);
         void refresh(state_enum, bool);
         void update_senses(JsonObject&);
-        void update_lora(int, int, int);
+        void update_lora(int, int);
         void changePage();
         void displayDetailed(int);
         void print_on_refresh(int line, String string);
@@ -36,6 +36,6 @@ class DisplayController {
         volatile bool changed;
         bool to_print;
         char to_print_lines[MAX_LINES][MAX_LINE_LENGTH];
-        int rssi, rssi_packet, snr;
+        int rssi, snr;
 };
 #endif
