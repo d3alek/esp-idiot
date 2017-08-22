@@ -301,8 +301,8 @@ void setup(void)
     }
 
     if (has_radio) {
-        LoRa.setPins(15, 9, 2); // not sure about nreset 9
-        if (!LoRa.begin(915E6)) { // not sure about the frequency, saw in https://github.com/sandeepmistry/arduino-LoRa/blob/master/examples/LoRaSender/LoRaSender.ino
+        LoRa.setPins(15, 2, 16);
+        if (!LoRa.begin(915E6)) { // 433E6, 866E6 or 915E6
             Serial.println("! starting LoRa failed - assuming no radio attached");
             has_radio = false;
         }
@@ -383,6 +383,8 @@ void loop(void)
     idiotWifiServer.handleClient();
     led.loop();
 
+    onLoraReceive(LoRa.parsePacket());
+
     if (mqttClient.connected()) {
         mqttClient.loop();
     }
@@ -411,6 +413,8 @@ void loop(void)
         oneWirePin = DEFAULT_ONE_WIRE_PIN;
 
         sleep_seconds = 0;
+
+        local_address = lora_gateway ? GATEWAY_ADDR: SLAVE_ADDR;
 
         if (!PersistentStore.wifiCredentialsStored()) {
             toState(serve_locally);
@@ -592,12 +596,10 @@ void loop(void)
         }
     }
     else if (state == setup_lora) {
-        local_address = lora_gateway ? GATEWAY_ADDR: SLAVE_ADDR;
-
         Serial.printf("? lora mode: %s, address: %d\n", (lora_gateway ? "gateway" : "slave"), local_address);
         
         // documentation: https://github.com/sandeepmistry/arduino-LoRa/blob/master/API.md
-        LoRa.enableCrc();
+        // LoRa.enableCrc();
         // LoRa.setFrequency(866E6); // set in LoRa.begin()
         // LoRa.setTxPower(17);
         // LoRa.setSpreadingFactor(7);
@@ -607,17 +609,11 @@ void loop(void)
         // LoRa.setSyncWord(0x34);
 
         if (lora_gateway) {
-            toState(listen_lora);
+            toState(publish);
         }
         else {
             toState(send_lora);
         }
-    }
-    else if (state == listen_lora) {
-        Serial.println("? continous receive mode");
-        LoRa.onReceive(onLoraReceive); 
-        LoRa.receive(); // continuous receive mode
-        toState(publish);
     }
     else if (state == send_lora) {
         char message[100] = "hello gw!";
