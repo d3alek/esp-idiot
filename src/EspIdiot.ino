@@ -72,9 +72,8 @@ bool has_radio = true;
 
 byte local_address = GATEWAY_ADDR;
 
-#define LORA_MESSAGE_SIZE 100
-volatile char lora_message[LORA_MESSAGE_SIZE];
-volatile char lora_message_from[10];
+int lora_message;
+byte lora_message_from;
 
 #include <elapsedMillis.h>
 elapsedMillis state_ms; // milliseconds elapsed since state switch
@@ -251,7 +250,7 @@ void hardReset() {
     EspControl.restart();
 }
 
-// first state loop from boot to cool_off since reset / restart. 
+// first state loop from boot to cool_off since reset / restart.
 // Sleeping does not count as reset / restart
 bool first_state_loop = true;
 
@@ -304,8 +303,8 @@ void setup(void)
         }
     }
 
-    strcpy((char*)lora_message, "");
-    strcpy((char*)lora_message_from, "");
+    lora_message = WRONG_VALUE;
+    lora_message_from = WRONG_VALUE;
 }
 
 volatile unsigned long lastInterruptTime = 0;
@@ -368,8 +367,8 @@ void ICACHE_RAM_ATTR onLoraReceive(int packetSize) {
     Serial.println("Snr: " + String(LoRa.packetSnr()));
     Serial.println();
 
-    strcpy((char*)lora_message, incoming.c_str());
-    strcpy((char*)lora_message_from, String(sender).c_str());
+    lora_message = atoi(incoming.c_str());
+    lora_message_from = sender;
 }
 
 void loop(void)
@@ -557,10 +556,9 @@ void loop(void)
 
         int vcc = ESP.getVcc();
         senses["vcc"] = vcc;
-        if (strlen((char*)lora_message) > 0) {
-            senses[String((char*)lora_message_from)] = lora_message;
-            strcpy((char*)lora_message, "");
-            strcpy((char*)lora_message_from, "");
+        if (lora_message != WRONG_VALUE) {
+            senses[String(lora_message_from)] = lora_message;
+            lora_message = lora_message_from = WRONG_VALUE;
         }
 
         char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
@@ -586,7 +584,7 @@ void loop(void)
     }
     else if (state == setup_lora) {
         Serial.printf("? lora mode: %s, address: %d\n", (lora_gateway ? "gateway" : "slave"), local_address);
-        
+
         // documentation: https://github.com/sandeepmistry/arduino-LoRa/blob/master/API.md
         // LoRa.enableCrc();
         // LoRa.setFrequency(866E6); // set in LoRa.begin()
@@ -606,7 +604,7 @@ void loop(void)
     }
     else if (state == send_lora) {
         char message[10] = "42";
-        
+
         sendLoraMessage(GATEWAY_ADDR, String(message));
         led.blink_fast(3);
 
@@ -637,7 +635,7 @@ void loop(void)
     else if (state == cool_off) {
         first_state_loop = false;
         if (sleep_seconds > 0) {
-            detachInterrupt(DISPLAY_CONTROL_PIN); 
+            detachInterrupt(DISPLAY_CONTROL_PIN);
             LoRa.sleep();
             toState(deep_sleep);
             return;
@@ -650,7 +648,7 @@ void loop(void)
             delay(100);
         }
         else {
-            detachInterrupt(DISPLAY_CONTROL_PIN); 
+            detachInterrupt(DISPLAY_CONTROL_PIN);
             toState(boot);
         }
     }
