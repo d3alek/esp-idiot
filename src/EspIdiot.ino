@@ -79,6 +79,7 @@ volatile char lora_message_from[10];
 #include <elapsedMillis.h>
 elapsedMillis state_ms; // milliseconds elapsed since state switch
 elapsedMillis button_pressed_ms; // milliseconds elapsed since button press
+elapsedMillis loop_ms; // milliseconds elapsed since last loop started
 
 // constants
 
@@ -147,12 +148,8 @@ Led led(2); // built-in led
 Ticker tickerOSWatch;
 #define OSWATCH_RESET_TIME 10
 
-static unsigned long last_loop;
-
 void ICACHE_RAM_ATTR osWatch(void) {
-    unsigned long t = millis();
-    unsigned long last_run = abs(t - last_loop);
-    if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
+    if (loop_ms >= (OSWATCH_RESET_TIME * 1000)) {
         Serial.println("!!! osWatch: reset");
         ESP.reset();  // hard reset
     }
@@ -254,22 +251,26 @@ void hardReset() {
     EspControl.restart();
 }
 
+// first state loop from boot to cool_off since reset / restart. 
+// Sleeping does not count as reset / restart
+bool first_state_loop = true;
+
 void setup(void)
 {
-    last_loop = millis();
+    loop_ms = 0;
     tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
 
     Serial.begin(115200);
     Serial.setDebugOutput(true);
     Serial.println();
 
-    if (ESP.getResetReason().equals("Hardware Watchdog")) {
-        Serial.println("Clearing state because Hardware Watchdog reset detected.");
-        ESP.eraseConfig();
-        ESP.reset();
+    if (ESP.getResetReason().equals("Deep-Sleep Wake")) {
+        Serial.println("? woke up from sleep");
+        first_state_loop = false;
     }
-
-    Serial.printf("? reset reason: %s\n? reset info: %s\n", ESP.getResetReason().c_str(), ESP.getResetInfo().c_str());
+    else {
+        Serial.printf("? reset reason: %s\n? reset info: %s\n", ESP.getResetReason().c_str(), ESP.getResetInfo().c_str());
+    }
 
     Serial.println("[setup]");
 
@@ -284,7 +285,6 @@ void setup(void)
 
     display.begin();
 
-    WiFi.mode(WIFI_STA);
 
     ensureGpio(PIN_A, 0);
     ensureGpio(PIN_B, 0);
@@ -374,7 +374,7 @@ void ICACHE_RAM_ATTR onLoraReceive(int packetSize) {
 
 void loop(void)
 {
-    last_loop = millis();
+    loop_ms = 0;
     display.refresh(state);
     idiotWifiServer.handleClient();
     led.loop();
@@ -409,7 +409,7 @@ void loop(void)
             toState(start_server);
         }
         else {
-            toState(connect_to_wifi);
+            toState(load_config);
         }
 
         return;
@@ -418,20 +418,33 @@ void loop(void)
         WiFi.disconnect();
         WiFi.mode(WIFI_AP);
         idiotWifiServer.start(uuid);
-        Serial.print("Serving locally for ");
-        Serial.print(SERVE_LOCALLY_SECONDS);
-        Serial.println(" seconds");
+        Serial.printf("? serving locally for %d seconds", SERVE_LOCALLY_SECONDS);
         toState(serve_locally);
     }
     else if (state == serve_locally) {
         if (state_ms > SERVE_LOCALLY_SECONDS * 1000) {
             toState(cool_off);
+            return;
+        }
+
+        Serial.print(".");
+        delay(10);
+    }
+    else if (state == load_config) {
+        char config[CONFIG_MAX_SIZE];
+        PersistentStore.readConfig(config);
+        Serial.printf("[stored config]\n%s\n", config);
+        yield();
+        loadConfig(config, false);
+
+        if (lora_gateway || first_state_loop) {
+            toState(connect_to_wifi);
         }
         else {
-            Serial.print(".");
-            delay(10);
+            WiFi.mode(WIFI_OFF);
+            WiFi.forceSleepBegin();
+            toState(read_senses);
         }
-        return;
     }
     else if (state == connect_to_wifi) {
         WiFi.printDiag(Serial);
@@ -440,6 +453,8 @@ void loop(void)
             toState(connect_to_internet);
             return;
         }
+        WiFi.forceSleepWake();
+        WiFi.mode(WIFI_STA);
         char wifiName[WIFI_NAME_MAX_SIZE];
         PersistentStore.readWifiName(wifiName);
         char wifiPassword[WIFI_PASS_MAX_SIZE];
@@ -453,7 +468,6 @@ void loop(void)
         }
 
         toState(wifi_wait);
-        return;
     }
     else if (state == wifi_wait) {
         if (WiFi.status() == WL_CONNECTED) {
@@ -461,13 +475,12 @@ void loop(void)
         }
         else if (state_ms > WIFI_WAIT_SECONDS * 1000){
             Serial.println("\n? waited for wifi enough, continue without.");
-            toState(load_config);
+            toState(read_senses);
         }
         else {
             Serial.print('.');
             delay(50);
         }
-        return;
     }
     else if (state == connect_to_internet) {
         const char* googleGenerate204 = "http://clients3.google.com/generate_204";
@@ -496,7 +509,7 @@ void loop(void)
                 Serial.printf("? redirection detected. GET code: %d\n", httpCode);
                 Serial.println("!!! WiFi connected but no access to internet - maybe stuck behind a login page.");
                 WiFi.disconnect(); // so that next connect_wifi we reconnect
-                toState(load_config);
+                toState(read_senses);
             }
             else {
                 Serial.println("? successfully passed the login page.");
@@ -510,14 +523,6 @@ void loop(void)
     }
     else if (state == connect_to_mqtt) {
         mqttConnect();
-        toState(load_config);
-    }
-    else if (state == load_config) {
-        char config[CONFIG_MAX_SIZE];
-        PersistentStore.readConfig(config);
-        Serial.printf("[stored config]\n%s\n", config);
-        yield();
-        loadConfig(config, false);
         if (mqttClient.connected()) {
             toState(update_config);
         }
@@ -537,7 +542,7 @@ void loop(void)
             return;
         }
         if (!configReceived) {
-            // maybe server has problems or our connection to it has problems, disconnect to be sure
+            // maybe server has problems or our connection to it has problems, disconnect to be sure so next state loop we reconnect
             mqttClient.disconnect();
         }
         if (configChanged) {
@@ -600,7 +605,7 @@ void loop(void)
         }
     }
     else if (state == send_lora) {
-        char message[100] = "hello gw!";
+        char message[10] = "42";
         
         sendLoraMessage(GATEWAY_ADDR, String(message));
         led.blink_fast(3);
@@ -630,6 +635,7 @@ void loop(void)
         toState(cool_off);
     }
     else if (state == cool_off) {
+        first_state_loop = false;
         if (sleep_seconds > 0) {
             detachInterrupt(DISPLAY_CONTROL_PIN); 
             LoRa.sleep();
