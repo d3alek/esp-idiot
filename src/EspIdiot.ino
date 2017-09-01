@@ -73,7 +73,7 @@ bool has_radio = true;
 byte local_address = GATEWAY_ADDR;
 
 int lora_message;
-byte lora_message_from;
+int lora_message_from;
 
 #include <elapsedMillis.h>
 elapsedMillis state_ms; // milliseconds elapsed since state switch
@@ -90,7 +90,7 @@ elapsedMillis loop_ms; // milliseconds elapsed since last loop started
 #define DELTA_WAIT_SECONDS 2
 #define WIFI_WAIT_SECONDS 5
 
-#define CHILL_WAIT_SECONDS 5
+#define CHILL_WAIT_SECONDS 10
 
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define SERVE_LOCALLY_SECONDS 60
@@ -302,6 +302,7 @@ void setup(void)
             has_radio = false;
         }
     }
+    display.has_radio = has_radio; 
 
     lora_message = WRONG_VALUE;
     lora_message_from = WRONG_VALUE;
@@ -327,48 +328,40 @@ void sendLoraMessage(byte destination, String outgoing) {
 }
 
 // adapted from https://github.com/sandeepmistry/arduino-LoRa/blob/master/examples/LoRaDuplex/LoRaDuplex.ino
-void ICACHE_RAM_ATTR onLoraReceive(int packetSize) {
+void onLoraReceive(int packetSize) {
     if (packetSize == 0) return; // if there's no packet, return
 
-    // read packet header bytes:
-    int recipient = LoRa.read(); // recipient address
-    byte sender = LoRa.read(); // sender address
-    byte incomingLength = LoRa.read(); // incoming msg length
+    byte recipient = LoRa.read();
+    byte sender = LoRa.read();
+    int incomingLength = LoRa.read();
     String incoming = "";
 
     while (LoRa.available()) {
         incoming += (char)LoRa.read();
     }
 
-    if (incomingLength != incoming.length()) { // check length for error
-        Serial.println("! message length does not match length - skip message");
-        return; // skip rest of function
+    if (incomingLength != incoming.length()) {
+        Serial.println("! lora message length does not match length - skip message");
+        return;
     }
 
     // if the recipient isn't this device or broadcast,
     if (recipient != local_address && recipient != 0xFF) {
-        Serial.println("! this message is not for me.");
-        return; // skip rest of function
+        Serial.println("! this lora message is not for me.");
+        return;
     }
 
     led.blink_fast(3);
-    display.update_lora(LoRa.packetRssi(), LoRa.packetSnr());
-    display.print_on_refresh(0, String("RSSI ") + LoRa.packetRssi());
-    display.print_on_refresh(2, String("SNR ") + LoRa.packetSnr());
-    display.print_on_refresh(4, incoming);
-    display.print_on_refresh(6, String("From 0x") + String(sender, HEX));
 
-    // if message is for this device, or broadcast, print details:
-    Serial.println("Received from: 0x" + String(sender, HEX));
-    Serial.println("Sent to: 0x" + String(recipient, HEX));
-    Serial.println("Message length: " + String(incomingLength));
-    Serial.println("Message: " + incoming);
-    Serial.println("RSSI: " + String(LoRa.packetRssi()));
-    Serial.println("Snr: " + String(LoRa.packetSnr()));
-    Serial.println();
+    float rssi = LoRa.packetRssi();
+    float snr = LoRa.packetSnr();
+    Serial.printf("? lora %d -> %d : %s (%d)\n? lora RSSI: %s SNR: %s\n", sender, recipient, incoming.c_str(), incomingLength, String(rssi, 1).c_str(), String(snr, 1).c_str());
+
 
     lora_message = atoi(incoming.c_str());
     lora_message_from = sender;
+
+    display.update_lora(lora_message_from, lora_message, rssi, snr);
 }
 
 void loop(void)
@@ -563,9 +556,9 @@ void loop(void)
 
         char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
         strcpy(readSensesResultCopy, readSensesResult);
+
         enrichSenses(senses, readSensesResultCopy);
         validate(senses);
-
         updateExpectations(senses);
 
         senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
@@ -653,6 +646,7 @@ void loop(void)
         }
     }
     else if (state == deep_sleep) {
+        led.off();
         EspControl.deepSleep(sleep_seconds);
     }
 }
@@ -684,6 +678,9 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
         }
         else {
             value = it->value;
+            if (value == WRONG_VALUE) {
+                wrong = true;
+            }
         }
         senses[key] = Sense().fromJson(previous_senses[key]).withValue(value).withWrong(wrong).toString();
     }
@@ -752,7 +749,7 @@ void validate(JsonObject& senses) {
     }
 }
 
-// Modified Welford algorithm to use windwowed-mean instead of true mean
+// Modified Welford algorithm to use windowed-mean instead of true mean
 void updateExpectations(JsonObject& senses) {
     Serial.println("[update expectations]");
     int previous_expectation, new_expectation, previous_ssd, new_ssd, value;
@@ -772,6 +769,10 @@ void updateExpectations(JsonObject& senses) {
         previous_expectation = sense.expectation;
         previous_ssd = sense.ssd;
 
+        if (value == WRONG_VALUE) {
+            Serial.printf("? not updating expectations for %s because current value is the wrong value\n", key);
+            continue;
+        }
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
             Serial.printf("? no expectations yet for %s, seeding with current value %d\n", key, value);
             previous_expectation = value;

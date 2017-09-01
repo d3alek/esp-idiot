@@ -4,12 +4,14 @@ DisplayController::DisplayController(OLED oled) {
     this->oled = oled;
     displayables_size = 0;
     displayables_counter = 0;
-    last_refresh_millis = 0;
+    last_refresh_ms = 0;
     page = 0;
     changed = true;
 
-    rssi = -1;
-    snr = -1;
+    lora_sender = -1;
+    lora_message = -1;
+    lora_rssi = -1;
+    lora_snr = -1;
 
     to_print = false;
     for (int i = 0; i < MAX_LINES; ++i) {
@@ -66,8 +68,8 @@ void DisplayController::refresh(state_enum state, bool force) {
         if (displayables_size > 0 ) {
             oled.clear();
             oled.print("Zelenik Senses");
-            if (millis() - last_refresh_millis > UPDATE_DISPLAY_SECONDS*1000) {
-                last_refresh_millis = millis();
+            if (last_refresh_ms > UPDATE_DISPLAY_SECONDS*1000) {
+                last_refresh_ms = 0;
                 displayables_counter++;
             }
             if (displayables_counter >= displayables_size) {
@@ -77,13 +79,27 @@ void DisplayController::refresh(state_enum state, bool force) {
         }
     }
     else if (page == 1) {
-        print_on_refresh(0, "Zelenik LoRa");
-        print_on_refresh(2, String("RSSI: ") + rssi);
-        print_on_refresh(4, String("SNR: ") + snr);
+        displayLora();
     }
     else if (page < pages) {
         displayDetailed(page-2);
     }
+}
+
+void DisplayController::displayLora() {
+    print_on_refresh(0, "Zelenik LoRa");
+    if (!has_radio) {
+        print_on_refresh(2, "No radio");
+        return;
+    }
+    if (lora_sender == -1 || lora_message == -1) {
+        print_on_refresh(2, "No message");
+        return;
+    }
+    print_on_refresh(2, lora_sender + String(": ") + lora_message);
+    print_on_refresh(4, String("RSSI: ") + String(lora_rssi, 1));
+    print_on_refresh(5, String("SNR: ") + String(lora_snr, 1));
+    print_on_refresh(6, String(lora_update_ms/1000., 0) + String("seconds ago"));
 }
 
 void DisplayController::print_on_refresh(int line, String string) {
@@ -126,12 +142,14 @@ void DisplayController::update_senses(JsonObject& senses) {
     changed = true;
 }
 
-void DisplayController::update_lora(int rssi, int snr) {
+void DisplayController::update_lora(int sender, int message, float rssi, float snr) {
     Serial.println("[display updated lora]");
 
-    this->rssi = rssi;
-    this->snr = snr;
-
+    this->lora_sender = sender;
+    this->lora_message = message;
+    this->lora_rssi = rssi;
+    this->lora_snr = snr;
+    lora_update_ms = 0;
     changed = true;
 }
 
