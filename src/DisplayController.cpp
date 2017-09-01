@@ -99,7 +99,7 @@ void DisplayController::displayLora() {
     print_on_refresh(2, lora_sender + String(": ") + lora_message);
     print_on_refresh(4, String("RSSI: ") + String(lora_rssi, 1));
     print_on_refresh(5, String("SNR: ") + String(lora_snr, 1));
-    print_on_refresh(6, String(lora_update_ms/1000., 0) + String("seconds ago"));
+    print_on_refresh(6, String(lora_update_ms/1000., 0) + String(" seconds ago"));
 }
 
 void DisplayController::print_on_refresh(int line, String string) {

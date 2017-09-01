@@ -1,4 +1,4 @@
-#define VERSION "z2v0.8"
+#define VERSION "z2v0.9"
 
 #include <Arduino.h>
 
@@ -366,8 +366,15 @@ void onLoraReceive(int packetSize) {
 
 void loop(void)
 {
+    if (loop_ms > 100) {
+        Serial.printf("! last loop was too long: %s\n", String(loop_ms).c_str());
+    }
     loop_ms = 0;
     display.refresh(state);
+    if (loop_ms > 100) {
+        Serial.printf("! screen refresh was too long: %s\n", String(loop_ms).c_str());
+    }
+    loop_ms = 0;
     idiotWifiServer.handleClient();
     led.loop();
 
@@ -471,7 +478,7 @@ void loop(void)
         }
         else {
             Serial.print('.');
-            delay(50);
+            delay(10);
         }
     }
     else if (state == connect_to_internet) {
@@ -604,10 +611,10 @@ void loop(void)
         toState(publish);
     }
     else if (state == publish) {
-        buildStateString(finalState);
-        yield();
-        Serial.printf("[final state]\n%s\n", finalState);
         if (mqttClient.connected()) {
+            buildStateString(finalState);
+            yield();
+            Serial.printf("[final state]\n%s\n", finalState);
             char topic[30];
             constructTopicName(topic, "things/");
             strcat(topic, "/update");
@@ -638,7 +645,7 @@ void loop(void)
     else if (state == chill) {
         if (state_ms < CHILL_WAIT_SECONDS * 1000) {
             Serial.print('.');
-            delay(100);
+            delay(10);
         }
         else {
             detachInterrupt(DISPLAY_CONTROL_PIN);
