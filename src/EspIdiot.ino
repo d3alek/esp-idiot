@@ -1,6 +1,7 @@
-#define VERSION "z18.2"
+#define VERSION "z19.4"
 
 #include <Arduino.h>
+#include <Servo.h>
 
 #include <ESP8266WiFi.h>
 
@@ -91,6 +92,8 @@ IdiotWifiServer idiotWifiServer;
 int dht11Pin = -1;
 int dht22Pin = -1;
 int oneWirePin = -1;
+int servoPin = -1;
+Servo servo;
 char readSensesResult[MAX_READ_SENSES_RESULT_SIZE] = "{}";
 
 char finalState[MAX_STATE_JSON_LENGTH];
@@ -310,6 +313,7 @@ void loop(void)
         dht11Pin = -1;
         dht22Pin = -1;
         oneWirePin = DEFAULT_ONE_WIRE_PIN;
+        servoPin = -1;
 
         if (!PersistentStore.wifiCredentialsStored()) {
             toState(serve_locally);
@@ -797,8 +801,47 @@ void doActions(JsonObject& senses) {
     }
 }
 
+int servoIsDown = 2;
+
+void servoUp() {
+    if (servoIsDown == 0) {
+        return;
+    }
+    for(int pos = 90; pos <= 180; pos += 1)
+    {                                 
+        servo.write(pos);            
+        delay(15);                     
+    } 
+    servoIsDown = 0;
+}
+
+void servoDown() {
+    if (servoIsDown == 1) {
+        return;
+    }
+    for(int pos = 180; pos >= 90; pos-=1)  
+    {                                
+        servo.write(pos);          
+        delay(15);                  
+    } 
+    servoIsDown = 1;
+}
+
 void ensureGpio(int gpio, int state) {
-  if (digitalRead(gpio) != state) {
+  if (servoPin != -1 && servoPin == gpio) {
+    Serial.printf("? gpio servo %d to %d\n", gpio, state);
+    if (!servo.attached()) {
+        Serial.printf("! servo not attached\n");
+        return;
+    }
+    if (state) {
+        servoUp();
+    }
+    else {
+        servoDown();
+    }
+  }
+  else if (digitalRead(gpio) != state) {
     gpioStateChanged = true;
     Serial.printf("? gpio %d to %d\n", gpio, state);
     pinMode(gpio, OUTPUT);
@@ -955,6 +998,16 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
   else if (strcmp(device, "OneWire") == 0) {
     oneWirePin = pinNumber;
   }
+  else if (strcmp(device, "servo") == 0) {
+    if (pinNumber != servoPin) {
+        Serial.printf("? new servo configuration %d->%d\n", servoPin, pinNumber);
+        if (servoPin != -1) {
+            servo.detach();
+        }
+        servoPin = pinNumber;
+        servo.attach(servoPin);
+    }
+  }
 }
 
 // make sure this is synced with makeDevicePinPairing
@@ -968,6 +1021,9 @@ void injectConfig(JsonObject& config) {
   }
   if (oneWirePin != -1) {
     gpio.set(String(oneWirePin), "OneWire");
+  }
+  if (servoPin != -1) {
+    gpio.set(String(servoPin), "servo");
   }
 
   JsonArray& actions = config.createNestedArray("actions");
