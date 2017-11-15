@@ -1,4 +1,4 @@
-#define VERSION "z19.4"
+#define VERSION "z19.9"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -381,41 +381,32 @@ void loop(void)
         return;
     }
     else if (state == connect_to_internet) {
-        const char* googleGenerate204 = "http://clients3.google.com/generate_204";
+        const char* googleGenerate204 = "http://zelenik.otselo.eu/generate_204";
         HTTPClient http;
-        Serial.printf("[check for redirection] %s\n", googleGenerate204);
+        Serial.printf("[check for connection] %s\n", googleGenerate204);
         http.begin(googleGenerate204);
         int httpCode = http.GET();
 
         if (httpCode != 204) {
-            Serial.printf("? redirection detected. GET code: %d\n", httpCode);
-
+            Serial.printf("? connection check failed. GET code: %d\n", httpCode);
             Serial.println(http.getString());
 
-            Serial.println("[get past redirection]");
-            http.begin("http://1.1.1.1/login.html");
-            http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-            httpCode = http.POST(String("username=guest&password=guest&buttonClicked=4"));
-
-            Serial.printf("? result: %d %s\n", httpCode);
-            Serial.println(http.getString());
-
-            Serial.println("[check for redirection again]");
+            Serial.println("? check for connection again]");
             http.begin(googleGenerate204);
             httpCode = http.GET();
             if (httpCode != 204) {
-                Serial.printf("? redirection detected. GET code: %d\n", httpCode);
+                Serial.printf("? connection check failed. GET code: %d\n", httpCode);
                 Serial.println("!!! WiFi connected but no access to internet - maybe stuck behind a login page.");
                 WiFi.disconnect(); // so that next connect_wifi we reconnect 
                 toState(load_config);
             }
             else {
-                Serial.println("? successfully passed the login page.");
+                Serial.println("? connected to internet after 1 retry.");
                 toState(connect_to_mqtt);
             }
         }
         else {
-            Serial.println("? connected to internet");
+            Serial.println("? connected to internet straight away");
             toState(connect_to_mqtt);
         }
     }
