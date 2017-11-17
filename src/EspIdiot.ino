@@ -1,4 +1,4 @@
-#define VERSION "z19.9"
+#define VERSION "z110.1"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -61,7 +61,7 @@
 
 #define MAX_READ_SENSES_RESULT_SIZE 512
 #define DELTA_WAIT_SECONDS 2
-#define WIFI_WAIT_SECONDS 5
+#define MAX_WIFI_WAIT_SECONDS 30
 #define COOL_OFF_WAIT_SECONDS 15
 #define I2C_POWER_WAIT_SECONDS 3
 #define DEFAULT_PUBLISH_INTERVAL 60
@@ -370,7 +370,7 @@ void loop(void)
         if (WiFi.status() == WL_CONNECTED) {
             toState(connect_to_internet);
         }
-        else if (millis() - wifiWaitStartTime > WIFI_WAIT_SECONDS * 1000){
+        else if (millis() - wifiWaitStartTime > MAX_WIFI_WAIT_SECONDS * 1000){
             Serial.println("\n? waited for wifi enough, continue without.");
             toState(load_config); 
         }

@@ -9,7 +9,7 @@ fi
 
 BIN_FILE=/www/zelenik/firmware/$VERSION.bin
 
-if scp -P 8902 shiptechnic@otselo.eu:$BIN_FILE /tmp/ >&/dev/null; then 
+if scp -o "StrictHostKeyChecking no" -P 8902 shiptechnic@otselo.eu:$BIN_FILE /tmp/ >&/dev/null; then 
     echo "$BIN_FILE already exists on remote host. Exiting."
     exit 1
 fi
@@ -18,5 +18,5 @@ echo "Pushing prod version $VERSION..."
 
 pio run && \
     cp .pioenvs/esp12e/firmware.bin $BIN_FILE 
-    scp -P 8902 .pioenvs/esp12e/firmware.bin shiptechnic@otselo.eu:$BIN_FILE && \
+    scp -o "StrictHostKeyChecking no" -P 8902 .pioenvs/esp12e/firmware.bin shiptechnic@otselo.eu:$BIN_FILE && \
     echo "Done."
