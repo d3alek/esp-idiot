@@ -1,4 +1,4 @@
-#define VERSION "z111"
+#define VERSION "z111.1"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -550,6 +550,7 @@ void loop(void)
     else if (state == cool_off) {
         if (coolOffStartTime == 0) {
             coolOffStartTime = millis();
+            WiFi.disconnect();
         }
         else if (millis() - coolOffStartTime < COOL_OFF_WAIT_SECONDS * 1000) {
             Serial.print('.');
