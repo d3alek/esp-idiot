@@ -61,7 +61,7 @@ void Sense::parse(const char* vesw) {
                 value = atof(value_string);
                 break;
             case 1:
-                expectation = atoi(value_string);
+                expectation = atof(value_string);
                 break;
             case 2:
                 ssd = atoi(value_string);
@@ -89,5 +89,5 @@ Sense Sense::withWrong(bool wrong) {
 }
 
 String Sense::toString() {
-    return String(value, 1) + "|" + String(expectation) + "|" + String(ssd) + "|" + (wrong ? String("w") : String("c"));
+    return String(value, 1) + "|" + String(expectation, 1) + "|" + String(ssd) + "|" + (wrong ? String("w") : String("c"));
 }

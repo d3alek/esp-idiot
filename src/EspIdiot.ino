@@ -1,4 +1,4 @@
-#define VERSION "z110.1"
+#define VERSION "z111"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -601,7 +601,7 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
 
 bool meetsExpectations(const char* name, Sense sense) {
     int value = sense.value;
-    int expectation = sense.expectation;
+    float expectation = sense.expectation;
     if (expectation == WRONG_VALUE || sense.ssd == WRONG_VALUE) {
         return true;
     }
@@ -662,10 +662,11 @@ void validate(JsonObject& senses) {
     }
 }
 
-// Modified Welford algorithm to use windwowed-mean instead of true mean
+// Modified Welford algorithm to use windowed-mean instead of true mean
 void updateExpectations(JsonObject& senses) {
     Serial.println("[update expectations]");
-    int previous_expectation, new_expectation, previous_ssd, new_ssd;
+    int previous_ssd, new_ssd;
+    float previous_expectation, new_expectation;
     float value;
     int delta, delta2;
     const char* key;
@@ -691,9 +692,7 @@ void updateExpectations(JsonObject& senses) {
 
         delta = value - previous_expectation;
         new_expectation = previous_expectation * prior_weight + value * posterior_weight; 
-        if (new_expectation < value) {
-            new_expectation += 1; // adding 1 because of integer rounding
-        }
+        
         delta2 = value - new_expectation;
         ssd_update = delta*delta2 * posterior_weight;
         if (ssd_update < 1) {
@@ -701,7 +700,7 @@ void updateExpectations(JsonObject& senses) {
         }
         new_ssd = previous_ssd * prior_weight + ssd_update;
         
-        Serial.printf("? %s expectation: %d->%d ; ssd %d->%d\n", key, previous_expectation, new_expectation, previous_ssd, new_ssd);
+        Serial.printf("? %s expectation: %.1f->%.1f ; ssd %d->%d\n", key, previous_expectation, new_expectation, previous_ssd, new_ssd);
         senses[key] = sense.withExpectationSSD(new_expectation, new_ssd).toString();
     }
 }
