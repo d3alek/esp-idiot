@@ -381,6 +381,7 @@ void loop(void)
         return;
     }
     else if (state == connect_to_internet) {
+        // TODO move this to CouchDB
         const char* googleGenerate204 = "http://zelenik.otselo.eu/generate_204";
         HTTPClient http;
         Serial.printf("[check for connection] %s\n", googleGenerate204);
@@ -411,6 +412,46 @@ void loop(void)
         }
     }
     else if (state == connect_to_mqtt) {
+        // get latest document name for thing
+        HTTPClient http;
+        char url[100];
+        strcpy(url, "http://192.168.1.10:5984/idiot-reported/_all_docs?descending=true&limit=1&startkey=\"");
+        strcat(url, uuid);
+        strcat(url, "{\""); // because the { character is bigger than the / character and we know the character following the thing UUID will be /
+        if (http.begin(url)) {
+          Serial.printf("? GET %s\n", url);
+          int httpCode = http.GET();
+
+          if (httpCode > 0) {
+            Serial.printf("? GET code: %d\n", httpCode);
+
+            if (httpCode == HTTP_CODE_OK) {
+              String payload = http.getString();
+              Serial.printf("? Parsing: ");
+              Serial.println(payload);
+              Serial.println();
+              StaticJsonBuffer<500> jsonBuffer;
+              JsonObject& allDocs = jsonBuffer.parseObject(payload.c_str());
+              if (allDocs.success()) {
+                JsonArray& rows = allDocs["rows"];
+                JsonObject& firstRow = rows[0];
+                const char* mostRecentId = firstRow["id"].asString();
+                Serial.printf("? Success, most recent doc id is ");
+                Serial.println(mostRecentId);
+              }
+              else {
+                Serial.println("! Failure parsing all docs payload");
+              }
+            }
+          }
+          else {
+            Serial.printf("! GET failed, error: %s\n", http.errorToString(httpCode).c_str());
+          }
+        }
+        else {
+          Serial.printf("! Could not connect to %s\n", url);
+        }
+
         mqttConnect();
         toState(load_config);
         return;
