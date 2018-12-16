@@ -77,7 +77,7 @@ Sense Sense::withValue(float value) {
     return *this;
 }
 
-Sense Sense::withExpectationSSD(int expectation, int ssd) {
+Sense Sense::withExpectationSSD(float expectation, int ssd) {
     this->expectation = expectation;
     this->ssd = ssd;
     return *this;
