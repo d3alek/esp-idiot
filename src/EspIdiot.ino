@@ -97,6 +97,7 @@ Servo servo;
 char readSensesResult[MAX_READ_SENSES_RESULT_SIZE] = "{}";
 
 char finalState[MAX_STATE_JSON_LENGTH];
+char shorterFinalState[MAX_STATE_JSON_LENGTH];
 
 Action actions[MAX_ACTIONS_SIZE];
 int actionsSize;
@@ -280,6 +281,8 @@ void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
     }
 }
 
+char currentDocId[40];
+
 void loop(void)
 {
     last_loop = millis();
@@ -302,6 +305,7 @@ void loop(void)
         i2cPowerStartTime = 0;
         updateConfigStartTime = 0;
         wifiWaitStartTime = 0;
+        strcpy(currentDocId, "");
 
         serveLocallyStartMs = 0;
         serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
@@ -415,9 +419,9 @@ void loop(void)
         // get latest document name for thing
         HTTPClient http;
         char url[100];
-        strcpy(url, "http://192.168.1.10:5984/idiot-reported/_all_docs?descending=true&limit=1&startkey=\"");
+        strcpy(url, "http://192.168.1.10:5984/idiot/_all_docs?descending=true&limit=1&startkey=\"");
         strcat(url, uuid);
-        strcat(url, "{\""); // because the { character is bigger than the / character and we know the character following the thing UUID will be /
+        strcat(url, "/\""); // because the / character is bigger than the $ character that we use for separator between thing id and timestamp
         if (http.begin(url)) {
           Serial.printf("? GET %s\n", url);
           int httpCode = http.GET();
@@ -431,13 +435,19 @@ void loop(void)
               Serial.println(payload);
               Serial.println();
               StaticJsonBuffer<500> jsonBuffer;
+              // TODO parse from stream instead
+              // JsonObject& root = jsonBuffer.parse(wifiClient); // source: https://arduinojson.org/
               JsonObject& allDocs = jsonBuffer.parseObject(payload.c_str());
               if (allDocs.success()) {
                 JsonArray& rows = allDocs["rows"];
-                JsonObject& firstRow = rows[0];
-                const char* mostRecentId = firstRow["id"].asString();
-                Serial.printf("? Success, most recent doc id is ");
-                Serial.println(mostRecentId);
+                if (rows.size() == 0) {
+                  Serial.println("! Rows are 0 - if I am a new thing, make a my document manually first - like `<thing-id>$0`");
+                }
+                else {
+                  JsonObject& firstRow = rows[0];
+                  strcpy(currentDocId, firstRow["id"].asString());
+                  Serial.printf("? Success, most recent doc id is %s\n", currentDocId);
+                }
               }
               else {
                 Serial.println("! Failure parsing all docs payload");
@@ -567,8 +577,37 @@ void loop(void)
     }
     else if (state == publish) {
         buildStateString(finalState);
+        buildShorterStateString(shorterFinalState);
         yield();
         Serial.printf("[final state]\n%s\n", finalState);
+        Serial.printf("[shorter final state]\n%s\n", shorterFinalState);
+        
+        HTTPClient http;
+        char url[100];
+        strcpy(url, "http://192.168.1.10:5984/idiot/_design/idiot-reported/_update/reported/");
+        strcat(url, currentDocId);
+        Serial.printf("? connect to %s\n", url);
+        if (http.begin(url)) {
+          int httpCode = http.POST((uint8_t*)shorterFinalState, strlen(shorterFinalState)); 
+          Serial.println("? send POST with shorter final state");
+
+          if (httpCode == HTTP_CODE_OK || httpCode == 201) {
+            String payload = http.getString();
+            if (payload.equals(String("OK"))) {
+              Serial.println("? success posting latest state");
+            }
+            else {
+              Serial.printf("! failure posting latest state, answer is: ");
+              Serial.println(payload);
+            }
+          }
+          else {
+            Serial.printf("! POST failed, error_code: %d, error: %s\n", httpCode, http.errorToString(httpCode).c_str());
+          }
+        }
+        else {
+          Serial.println("Could not connect to url");
+        }
         if (mqttClient.connected()) {
             char topic[30];
             constructTopicName(topic, "things/");
@@ -1083,6 +1122,38 @@ void injectActions(JsonArray& actionsJson) {
     action.buildActionString(action_string);
     actionsJson.add(String(action_string));
   }
+}
+
+void buildShorterStateString(char* stateJson) {
+  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
+
+  JsonObject& reported = jsonBuffer.createObject();
+
+  reported["wifi"] = WiFi.SSID();
+  reported["state"] = STATE_STRING[state];
+  reported["version"] = VERSION;
+  reported["b"] = boot_time;
+  
+  JsonObject& gpio = reported.createNestedObject("write");
+  injectGpioState(gpio);
+  
+  JsonObject& config = reported.createNestedObject("config");
+
+  injectConfig(config);
+  
+  StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
+  // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
+  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+  strcpy(readSensesResultCopy, readSensesResult);
+  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
+  
+  int actualLength = reported.measureLength();
+  if (actualLength >= MAX_STATE_JSON_LENGTH) {
+    Serial.println("!!! resulting JSON is too long, expect errors");
+  }
+
+  reported.printTo(stateJson, MAX_STATE_JSON_LENGTH);
+  return;
 }
 
 void buildStateString(char* stateJson) {
