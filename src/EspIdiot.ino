@@ -7,7 +7,8 @@
 #include <ESP8266WiFiMulti.h>
 
 #include <ESP8266HTTPClient.h>
-#include <ESP8266httpUpdate.h>
+#include <WiFiClientSecureBearSSL.h>
+//#include <ESP8266httpUpdate.h>
 
 #include "ESP8266WebServer.h" // including locally because http://stackoverflow.com/a/6506611/5799810
 
@@ -72,6 +73,8 @@
 
 #define SENSE_EXPECTATIONS_WINDOW 10
 
+const char* fingerprint = "CE:68:2D:E6:49:12:D5:34:95:03:5A:B7:7D:DC:41:75:FB:68:2C:23";
+
 const char* POST_STATE_URL_PATH = "/idiot/_design/idiot-state/_update/state/";
 const char* POST_SENSES_URL_PATH = "/idiot/_design/idiot-senses/_update/senses/";
 
@@ -79,7 +82,6 @@ const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
 
-WiFiClient wclient;
 ESP8266WiFiMulti WiFiMulti;
 
 char uuid[15];
@@ -367,10 +369,19 @@ void loop(void)
 
         configChanged = false;
 
+        #ifdef USE_SSL
+          std::unique_ptr<WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+          client->setFingerprint(fingerprint);
+        #else
+          WiFiClient* client;
+          WiFiClient realClient;
+          client = &realClient;
+        #endif
+
         HTTPClient http;
         char url[100];
         buildUrl(url, POST_STATE_URL_PATH);
-        if (http.begin(url)) {
+        if (http.begin(*client, url)) {
           Serial.printf("? POST %s\n", url);
           int httpCode = http.POST((uint8_t*)finalState, strlen(finalState)); 
           if (httpCode > 0) {
@@ -398,7 +409,7 @@ void loop(void)
             }
           }
           else {
-            Serial.printf("! GET failed, error: %s\n", http.errorToString(httpCode).c_str());
+            Serial.printf("! POST failed, error code %d, error: %s\n", httpCode, http.errorToString(httpCode).c_str());
           }
         }
         else {
@@ -484,13 +495,22 @@ void loop(void)
         toState(publish_senses);
     }
     else if (state == publish_senses) {
+        #ifdef USE_SSL
+          std::unique_ptr<WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+          client->setFingerprint(fingerprint);
+        #else
+          WiFiClient* client;
+          WiFiClient realClient;
+          client = &realClient;
+        #endif
+
         HTTPClient http;
         char url[100];
         buildUrl(url, POST_SENSES_URL_PATH);
         Serial.printf("? connect to %s\n", url);
-        if (http.begin(url)) {
+        if (http.begin(*client, url)) {
           int httpCode = http.POST((uint8_t*)readSensesResult, strlen(readSensesResult)); 
-          Serial.println("? send POST with final state");
+          Serial.println("? send POST with senses");
 
           if (httpCode == HTTP_CODE_OK || httpCode == 201) {
             String result = http.getString();
@@ -503,7 +523,7 @@ void loop(void)
             }
           }
           else {
-            Serial.printf("! POST failed, error_code: %d, error: %s\n", httpCode, http.errorToString(httpCode).c_str());
+            Serial.printf("! POST failed, error code: %d, error: %s\n", httpCode, http.errorToString(httpCode).c_str());
           }
         }
         else {
