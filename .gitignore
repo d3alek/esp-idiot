@@ -1,4 +1,4 @@
-MQTTConfig*.h
+Secret*.h
 .build
 .deps
 runtests

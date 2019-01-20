@@ -4,6 +4,7 @@
 #include <Servo.h>
 
 #include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
@@ -35,9 +36,9 @@
 
 // file which defines mqttHostname, mqttPort, mqttUser, mqttPassword
 #ifdef DEV
-#include "MQTTConfigDev.h"
+#include "SecretDev.h"
 #else
-#include "MQTTConfig.h"
+#include "Secret.h"
 #endif
 
 #include "State.h"
@@ -71,14 +72,15 @@
 
 #define SENSE_EXPECTATIONS_WINDOW 10
 
-const char* POST_STATE_URL_PREFIX = "http://192.168.1.10:5984/idiot/_design/idiot-state/_update/state/";
-const char* POST_SENSES_URL_PREFIX = "http://192.168.1.10:5984/idiot/_design/idiot-senses/_update/senses/";
+const char* POST_STATE_URL_PATH = "/idiot/_design/idiot-state/_update/state/";
+const char* POST_SENSES_URL_PATH = "/idiot/_design/idiot-senses/_update/senses/";
 
 const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
 
 WiFiClient wclient;
+ESP8266WiFiMulti WiFiMulti;
 
 char uuid[15];
 char updateTopic[20];
@@ -144,33 +146,33 @@ void toState(state_enum newState) {
 
 // A manual reset is needed after a Serial flash, otherwise this throws the ESP into oblivion
 // See https://github.com/esp8266/Arduino/issues/1722
-void updateFromS3(char* updatePath) {
-  toState(ota_update);
-  display.refresh(state, true);
-
-  char updateUrl[100];
-  strcpy(updateUrl, UPDATE_URL);
-  strcat(updateUrl, updatePath);
-  Serial.printf("[starting OTA update] %s\n", updateUrl);
-  t_httpUpdate_return ret = ESPhttpUpdate.update(updateUrl);
-
-  Serial.printf("OTA update finished: %d\n", ret);
-  switch(ret) {
-      case HTTP_UPDATE_FAILED:
-          Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
-          break;
-
-      case HTTP_UPDATE_NO_UPDATES:
-          Serial.println("HTTP_UPDATE_NO_UPDATES");
-          break;
-
-      case HTTP_UPDATE_OK:
-          Serial.println("HTTP_UPDATE_OK");
-          break;
-  }
-  
-  return;
-}
+//void updateFromS3(char* updatePath) {
+//  toState(ota_update);
+//  display.refresh(state, true);
+//
+//  char updateUrl[100];
+//  strcpy(updateUrl, UPDATE_URL);
+//  strcat(updateUrl, updatePath);
+//  Serial.printf("[starting OTA update] %s\n", updateUrl);
+//  t_httpUpdate_return ret = ESPhttpUpdate.update(updateUrl);
+//
+//  Serial.printf("OTA update finished: %d\n", ret);
+//  switch(ret) {
+//      case HTTP_UPDATE_FAILED:
+//          Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+//          break;
+//
+//      case HTTP_UPDATE_NO_UPDATES:
+//          Serial.println("HTTP_UPDATE_NO_UPDATES");
+//          break;
+//
+//      case HTTP_UPDATE_OK:
+//          Serial.println("HTTP_UPDATE_OK");
+//          break;
+//  }
+//  
+//  return;
+//}
 
 void hardReset() {
     toState(hard_reset);
@@ -211,6 +213,18 @@ void setup(void)
     display.begin();
 
     WiFi.mode(WIFI_STA);
+    WiFiMulti.addAP(ADMIN_WIFI_SSID, ADMIN_WIFI_PASSWORD);
+    char wifiName[WIFI_NAME_MAX_SIZE];
+    PersistentStore.readWifiName(wifiName);
+    char wifiPassword[WIFI_PASS_MAX_SIZE];
+    PersistentStore.readWifiPassword(wifiPassword);
+    Serial.printf("WiFi config: %s %s\n", wifiName, wifiPassword);
+    if (strlen(wifiPassword) == 0) {
+        WiFiMulti.addAP(wifiName);
+    }
+    else {
+        WiFiMulti.addAP(wifiName, wifiPassword);
+    }
 
     ensureGpio(PIN_A, 0);
     ensureGpio(PIN_B, 0);
@@ -237,6 +251,19 @@ void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
 }
 
 char payload[100]; // TODO think how big this can be
+
+void buildUrl(char* url, const char* path) {
+  strcpy(url, SERVER_PROTOCOL);
+  strcat(url, SERVER_USER);
+  strcat(url, ":");
+  strcat(url, SERVER_PASSWORD);
+  strcat(url, "@");
+  strcat(url, SERVER_HOSTNAME);
+  strcat(url, ":");
+  strcat(url, String(SERVER_PORT).c_str());
+  strcat(url, path);
+  strcat(url, uuid);
+}
 
 void loop(void)
 {
@@ -300,21 +327,10 @@ void loop(void)
     }
     else if (state == connect_to_wifi) {
         WiFi.printDiag(Serial);
-        if (WiFi.status() == WL_CONNECTED) {
+        if (WiFiMulti.run() == WL_CONNECTED) {
             Serial.println("? already connected");
             toState(load_config);
             return;
-        }
-        char wifiName[WIFI_NAME_MAX_SIZE];
-        PersistentStore.readWifiName(wifiName);
-        char wifiPassword[WIFI_PASS_MAX_SIZE];
-        PersistentStore.readWifiPassword(wifiPassword);
-        Serial.printf("WiFi config: %s %s\n", wifiName, wifiPassword);
-        if (strlen(wifiPassword) == 0) {
-            WiFi.begin(wifiName);
-        }
-        else {
-            WiFi.begin(wifiName, wifiPassword);
         }
 
         wifiWaitStartTime = millis();
@@ -322,7 +338,7 @@ void loop(void)
         return;
     }
     else if (state == wifi_wait) {
-        if (WiFi.status() == WL_CONNECTED) {
+        if (WiFiMulti.run() == WL_CONNECTED) {
             toState(load_config);
         }
         else if (millis() - wifiWaitStartTime > MAX_WIFI_WAIT_SECONDS * 1000){
@@ -353,8 +369,7 @@ void loop(void)
 
         HTTPClient http;
         char url[100];
-        strcpy(url, POST_STATE_URL_PREFIX);
-        strcat(url, uuid);
+        buildUrl(url, POST_STATE_URL_PATH);
         if (http.begin(url)) {
           Serial.printf("? POST %s\n", url);
           int httpCode = http.POST((uint8_t*)finalState, strlen(finalState)); 
@@ -370,13 +385,11 @@ void loop(void)
                 int unix_time = atoi(pch);
                 boot_time = unix_time - seconds_since_boot();
                 pch = strtok(NULL, "\n");
-                if (pch != NULL && !strcmp(pch, "{}")) {
+                if (pch != NULL && strcmp(pch, "{}")) {
                   loadConfig(pch, true);
                   Serial.printf("? Success parsing update payload - delta %s\n", pch);
                   toState(update_config);
-                }
-                else {
-                  toState(read_senses);
+                  return;
                 }
               }
               else {
@@ -391,6 +404,7 @@ void loop(void)
         else {
           Serial.printf("! Could not connect to %s\n", url);
         }
+        toState(read_senses);
     }
     else if (state == update_config) { 
         saveConfig();
@@ -447,7 +461,7 @@ void loop(void)
 
         senses["A0"] = brightness;
 
-        if (boot_time != 0) {
+        if (boot_time != 0L) {
             senses["time"] = seconds_today();
         }
 
@@ -467,13 +481,12 @@ void loop(void)
         digitalWrite(I2C_POWER, 0);
 
         display.update(senses);
-        toState(publish_state);
+        toState(publish_senses);
     }
-    else if (state == publish_state) {
+    else if (state == publish_senses) {
         HTTPClient http;
         char url[100];
-        strcpy(url, POST_SENSES_URL_PREFIX);
-        strcat(url, uuid);
+        buildUrl(url, POST_SENSES_URL_PATH);
         Serial.printf("? connect to %s\n", url);
         if (http.begin(url)) {
           int httpCode = http.POST((uint8_t*)readSensesResult, strlen(readSensesResult)); 
@@ -840,12 +853,13 @@ void loadConfigFromJson(JsonObject& config, bool from_server) {
             Serial.println("? already the correct version. Ignoring update delta.");
         }
         else {
-            char fileName[20];
-            strcpy(fileName, "");
-            strcat(fileName, version);
-            strcat(fileName, ".bin");
-            updateFromS3(fileName);
-            ESP.restart();
+          Serial.println("NOT IMPLEMENTED");
+//            char fileName[20];
+//            strcpy(fileName, "");
+//            strcat(fileName, version);
+//            strcat(fileName, ".bin");
+//            updateFromS3(fileName);
+//            ESP.restart();
         }
     }
     if (config.containsKey("gpio")) {
@@ -1009,40 +1023,6 @@ void buildShorterStateString(char* stateJson) {
   reported.printTo(stateJson, MAX_STATE_JSON_LENGTH);
   return;
 }
-
-//void buildStateString(char* stateJson) {
-//  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
-//
-//  JsonObject& root = jsonBuffer.createObject();
-//  JsonObject& stateObject = root.createNestedObject("state");
-//  JsonObject& reported = stateObject.createNestedObject("reported");
-//
-//  reported["wifi"] = WiFi.SSID();
-//  reported["state"] = STATE_STRING[state];
-//  reported["version"] = VERSION;
-//  reported["b"] = boot_time;
-//  
-//  JsonObject& gpio = reported.createNestedObject("write");
-//  injectGpioState(gpio);
-//  
-//  JsonObject& config = reported.createNestedObject("config");
-//
-//  injectConfig(config);
-//  
-//  StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
-//  // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
-//  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
-//  strcpy(readSensesResultCopy, readSensesResult);
-//  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
-//  
-//  int actualLength = root.measureLength();
-//  if (actualLength >= MAX_STATE_JSON_LENGTH) {
-//    Serial.println("!!! resulting JSON is too long, expect errors");
-//  }
-//
-//  root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
-//  return;
-//}
 
 void injectGpioState(JsonObject& gpio) { 
   for (int i = 0; i < GpioState.getSize(); ++i) {
