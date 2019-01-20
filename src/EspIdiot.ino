@@ -1,4 +1,4 @@
-#define VERSION "z111"
+#define VERSION "z2"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -71,12 +71,14 @@
 
 #define SENSE_EXPECTATIONS_WINDOW 10
 
+const char* POST_STATE_URL_PREFIX = "http://192.168.1.10:5984/idiot/_design/idiot-state/_update/state/";
+const char* POST_SENSES_URL_PREFIX = "http://192.168.1.10:5984/idiot/_design/idiot-senses/_update/senses/";
+
 const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
 
 WiFiClient wclient;
-PubSubClient mqttClient(wclient);
 
 char uuid[15];
 char updateTopic[20];
@@ -97,7 +99,6 @@ Servo servo;
 char readSensesResult[MAX_READ_SENSES_RESULT_SIZE] = "{}";
 
 char finalState[MAX_STATE_JSON_LENGTH];
-char shorterFinalState[MAX_STATE_JSON_LENGTH];
 
 Action actions[MAX_ACTIONS_SIZE];
 int actionsSize;
@@ -114,7 +115,7 @@ float serveLocallySeconds;
 OLED oled(I2C_PIN_1, I2C_PIN_2);
 DisplayController display(oled);
 
-unsigned long boot_time = -1;
+unsigned long boot_time = 0;
 
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
@@ -169,52 +170,6 @@ void updateFromS3(char* updatePath) {
   }
   
   return;
-}
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    Serial.printf("\n? message arrived [%s]\n", topic);
-    char normalizedPayload[length+1];
-    for (int i=0;i<length;i++) {
-        normalizedPayload[i] = (char)payload[i];
-    }
-    normalizedPayload[length]='\0';
-    Serial.println(normalizedPayload);
-    configReceived = true;
-    loadConfig(normalizedPayload, true);
-}
-
-// Appends UUID to topic prefix and saves it in topic. Using separate
-// topic and topic prefix due to memory corruption issues otherwise.
-void constructTopicName(char* topic, const char* topicPrefix) {
-    strcpy(topic, topicPrefix);
-    strcat(topic, uuid);
-}
-
-bool mqttConnect() {
-    Serial.print("? MQTT ");
-    if (mqttClient.connected()) {
-        Serial.println("ok");
-        return true;
-    }
-    mqttClient.setServer(mqttHostname, mqttPort).setCallback(mqttCallback);
-    if (mqttClient.connect(uuid, mqttUser, mqttPassword)) {
-        Serial.println("connected");
-        constructTopicName(updateTopic, "update/");
-        char deltaTopic[30];
-        constructTopicName(deltaTopic, "things/");
-        strcat(deltaTopic, "/delta");
-
-        strcpy(updateResultTopic, updateTopic);
-        strcat(updateResultTopic,"/result");
-
-        mqttClient.subscribe(updateTopic);
-        mqttClient.subscribe(deltaTopic);
-        Serial.printf("? listening to %s and %s\n", updateTopic, deltaTopic); // do not change syntax here carelessly, esp_logger parses it
-        return true;
-    }
-    Serial.print("failed, rc=");
-    Serial.println(mqttClient.state());
-    return false;
 }
 
 void hardReset() {
@@ -281,17 +236,13 @@ void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
     }
 }
 
-char currentDocId[40];
+char payload[100]; // TODO think how big this can be
 
 void loop(void)
 {
     last_loop = millis();
     display.refresh(state);
     idiotWifiServer.handleClient();
-
-    if (mqttClient.connected()) {
-        mqttClient.loop();
-    }
 
     if (state == boot) {
         pinMode(DISPLAY_CONTROL_PIN, INPUT);
@@ -305,7 +256,7 @@ void loop(void)
         i2cPowerStartTime = 0;
         updateConfigStartTime = 0;
         wifiWaitStartTime = 0;
-        strcpy(currentDocId, "");
+        strcpy(payload, "");
 
         serveLocallyStartMs = 0;
         serveLocallySeconds = DEFAULT_SERVE_LOCALLY_SECONDS;
@@ -351,7 +302,7 @@ void loop(void)
         WiFi.printDiag(Serial);
         if (WiFi.status() == WL_CONNECTED) {
             Serial.println("? already connected");
-            toState(connect_to_internet);
+            toState(load_config);
             return;
         }
         char wifiName[WIFI_NAME_MAX_SIZE];
@@ -372,85 +323,64 @@ void loop(void)
     }
     else if (state == wifi_wait) {
         if (WiFi.status() == WL_CONNECTED) {
-            toState(connect_to_internet);
+            toState(load_config);
         }
         else if (millis() - wifiWaitStartTime > MAX_WIFI_WAIT_SECONDS * 1000){
             Serial.println("\n? waited for wifi enough, continue without.");
-            toState(load_config); 
         }
         else {
             Serial.print('.');
             delay(50);
         }
-        return;
+        toState(load_config); 
     }
-    else if (state == connect_to_internet) {
-        // TODO move this to CouchDB
-        const char* googleGenerate204 = "http://zelenik.otselo.eu/generate_204";
-        HTTPClient http;
-        Serial.printf("[check for connection] %s\n", googleGenerate204);
-        http.begin(googleGenerate204);
-        int httpCode = http.GET();
 
-        if (httpCode != 204) {
-            Serial.printf("? connection check failed. GET code: %d\n", httpCode);
-            Serial.println(http.getString());
-
-            Serial.println("? check for connection again]");
-            http.begin(googleGenerate204);
-            httpCode = http.GET();
-            if (httpCode != 204) {
-                Serial.printf("? connection check failed. GET code: %d\n", httpCode);
-                Serial.println("!!! WiFi connected but no access to internet - maybe stuck behind a login page.");
-                WiFi.disconnect(); // so that next connect_wifi we reconnect 
-                toState(load_config);
-            }
-            else {
-                Serial.println("? connected to internet after 1 retry.");
-                toState(connect_to_mqtt);
-            }
-        }
-        else {
-            Serial.println("? connected to internet straight away");
-            toState(connect_to_mqtt);
-        }
+    else if (state == load_config) {
+        char config[CONFIG_MAX_SIZE];
+        PersistentStore.readConfig(config);
+        Serial.printf("[stored config]\n%s\n", config);
+        yield();
+        loadConfig(config, false);
+        // TODO maybe check for wifi connectivity
+        toState(publish_state);
     }
-    else if (state == connect_to_mqtt) {
-        // get latest document name for thing
+
+    else if (state == publish_state) { 
+        buildShorterStateString(finalState);
+        yield();
+
+        configChanged = false;
+
         HTTPClient http;
         char url[100];
-        strcpy(url, "http://192.168.1.10:5984/idiot/_all_docs?descending=true&limit=1&startkey=\"");
+        strcpy(url, POST_STATE_URL_PREFIX);
         strcat(url, uuid);
-        strcat(url, "/\""); // because the / character is bigger than the $ character that we use for separator between thing id and timestamp
         if (http.begin(url)) {
-          Serial.printf("? GET %s\n", url);
-          int httpCode = http.GET();
-
+          Serial.printf("? POST %s\n", url);
+          int httpCode = http.POST((uint8_t*)finalState, strlen(finalState)); 
           if (httpCode > 0) {
-            Serial.printf("? GET code: %d\n", httpCode);
+            Serial.printf("? POST code: %d\n", httpCode);
 
-            if (httpCode == HTTP_CODE_OK) {
-              String payload = http.getString();
-              Serial.printf("? Parsing: ");
-              Serial.println(payload);
-              Serial.println();
-              StaticJsonBuffer<500> jsonBuffer;
-              // TODO parse from stream instead
-              // JsonObject& root = jsonBuffer.parse(wifiClient); // source: https://arduinojson.org/
-              JsonObject& allDocs = jsonBuffer.parseObject(payload.c_str());
-              if (allDocs.success()) {
-                JsonArray& rows = allDocs["rows"];
-                if (rows.size() == 0) {
-                  Serial.println("! Rows are 0 - if I am a new thing, make a my document manually first - like `<thing-id>$0`");
+            if (httpCode == HTTP_CODE_OK || httpCode == 201) {
+              String constPayload = http.getString();
+              strcpy(payload, constPayload.c_str());
+              Serial.printf("? Parsing:\n%s\n", payload);
+              char* pch = strtok(payload, "\n");
+              if (pch != NULL) {
+                int unix_time = atoi(pch);
+                boot_time = unix_time - seconds_since_boot();
+                pch = strtok(NULL, "\n");
+                if (pch != NULL && !strcmp(pch, "{}")) {
+                  loadConfig(pch, true);
+                  Serial.printf("? Success parsing update payload - delta %s\n", pch);
+                  toState(update_config);
                 }
                 else {
-                  JsonObject& firstRow = rows[0];
-                  strcpy(currentDocId, firstRow["id"].asString());
-                  Serial.printf("? Success, most recent doc id is %s\n", currentDocId);
+                  toState(read_senses);
                 }
               }
               else {
-                Serial.println("! Failure parsing all docs payload");
+                Serial.println("! Failure parsing update payload - expected at least two lines, got 0");
               }
             }
           }
@@ -461,46 +391,10 @@ void loop(void)
         else {
           Serial.printf("! Could not connect to %s\n", url);
         }
-
-        mqttConnect();
-        toState(load_config);
-        return;
-    }
-    else if (state == load_config) {
-        char config[CONFIG_MAX_SIZE];
-        PersistentStore.readConfig(config);
-        Serial.printf("[stored config]\n%s\n", config);
-        yield();
-        loadConfig(config, false);
-        if (mqttClient.connected()) {
-            toState(update_config);
-        }
-        else {
-            toState(read_senses);
-        }
     }
     else if (state == update_config) { 
-        if (updateConfigStartTime == 0) {
-            requestState();
-            updateConfigStartTime = millis();
-            configChanged = false;
-            configReceived = false;
-        }
-
-        if (!configReceived && millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
-            Serial.print('.');    
-            return;
-        }
-        else {
-            if (!configReceived) {
-                // maybe server has problems or our connection to it has problems, disconnect to be sure
-                mqttClient.disconnect();
-            }
-            if (configChanged) {
-                saveConfig();
-            }
-            toState(read_senses);
-        }
+        saveConfig();
+        toState(read_senses);
     }
     else if (state == read_senses) {
         if (i2cPowerStartTime == 0) {
@@ -553,7 +447,7 @@ void loop(void)
 
         senses["A0"] = brightness;
 
-        if (boot_time != -1) {
+        if (boot_time != 0) {
             senses["time"] = seconds_today();
         }
 
@@ -566,39 +460,33 @@ void loop(void)
         updateExpectations(senses);
 
         senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
-        Serial.printf("[result]\n%s\n", readSensesResult);
+        Serial.printf("[senses]\n%s\n", readSensesResult);
 
         doActions(senses);
 
         digitalWrite(I2C_POWER, 0);
 
         display.update(senses);
-        toState(publish);
+        toState(publish_state);
     }
-    else if (state == publish) {
-        buildStateString(finalState);
-        buildShorterStateString(shorterFinalState);
-        yield();
-        Serial.printf("[final state]\n%s\n", finalState);
-        Serial.printf("[shorter final state]\n%s\n", shorterFinalState);
-        
+    else if (state == publish_state) {
         HTTPClient http;
         char url[100];
-        strcpy(url, "http://192.168.1.10:5984/idiot/_design/idiot-reported/_update/reported/");
-        strcat(url, currentDocId);
+        strcpy(url, POST_SENSES_URL_PREFIX);
+        strcat(url, uuid);
         Serial.printf("? connect to %s\n", url);
         if (http.begin(url)) {
-          int httpCode = http.POST((uint8_t*)shorterFinalState, strlen(shorterFinalState)); 
-          Serial.println("? send POST with shorter final state");
+          int httpCode = http.POST((uint8_t*)readSensesResult, strlen(readSensesResult)); 
+          Serial.println("? send POST with final state");
 
           if (httpCode == HTTP_CODE_OK || httpCode == 201) {
-            String payload = http.getString();
-            if (payload.equals(String("OK"))) {
-              Serial.println("? success posting latest state");
+            String result = http.getString();
+            if (result.equals(String("OK"))) {
+              Serial.println("? success posting senses");
             }
             else {
-              Serial.printf("! failure posting latest state, answer is: ");
-              Serial.println(payload);
+              Serial.printf("! failure posting senses, answer is: ");
+              Serial.println(result);
             }
           }
           else {
@@ -608,24 +496,7 @@ void loop(void)
         else {
           Serial.println("Could not connect to url");
         }
-        if (mqttClient.connected()) {
-            char topic[30];
-            constructTopicName(topic, "things/");
-            strcat(topic, "/update");
-
-            Serial.printf("publish to %s\n", topic);
-            bool success = mqttClient.publish(topic, finalState);
-            if (!success) {
-                Serial.println("!!! failed to publish");    
-                mqttClient.disconnect();
-            }
-
-            toState(cool_off);
-        }
-        else {
-            Serial.println("? MQTT not connected so skip publishing.");
-            toState(cool_off);
-        }
+        toState(cool_off);
     }
     else if (state == cool_off) {
         if (coolOffStartTime == 0) {
@@ -765,7 +636,7 @@ void updateExpectations(JsonObject& senses) {
         previous_ssd = sense.ssd;
 
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
-            Serial.printf("? no expectations yet for %s, seeding with current value %d\n", key, value);
+            Serial.printf("? no expectations yet for %s, seeding with current value %.2f\n", key, value);
             previous_expectation = value;
             previous_ssd = 5 * 5 * SENSE_EXPECTATIONS_WINDOW * SENSE_EXPECTATIONS_WINDOW; // variance is at least 5^2 
         }
@@ -824,10 +695,10 @@ void doActions(JsonObject& senses) {
                 int value = sense.value; 
                 Serial.printf("? found sense %s for the action with value [%d]\n", key, value);
                 if (value == WRONG_VALUE) {
-                    Serial.printf("!!! could not parse or wrong value\n", value);
+                    Serial.printf("!!! could not parse or wrong value %d\n", value);
                 }
                 if (sense.wrong) {
-                    Serial.printf("? ignoring because value is marked as wrong\n", key);
+                    Serial.printf("? ignoring because value is marked as wrong %s\n", key);
                     Serial.println("? preserving GPIO state");
                     GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
                     continue;
@@ -920,18 +791,6 @@ void ensureGpio(int gpio, int state) {
   GpioState.set(gpio, state);
 }
 
-void requestState() {
-    char topic[30];
-    constructTopicName(topic, "things/");
-    strcat(topic, "/get");
-    Serial.printf("? publish to %s\n", topic);
-    bool success = mqttClient.publish(topic, "{}");
-    if (!success) {
-        Serial.println("!!! failed to publish");    
-        mqttClient.disconnect();
-    }
-}
-
 bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObject) {
   Serial.print("DHT ");
   
@@ -1001,10 +860,6 @@ void loadConfigFromJson(JsonObject& config, bool from_server) {
         configChanged = true;
         loadActions(config["actions"]);
     }
-    if (config.containsKey("t")) {
-        int unix_time = config["t"];
-        boot_time = unix_time - seconds_since_boot();
-    }
 }
 
 int seconds_since_boot() {
@@ -1017,7 +872,6 @@ int seconds_today() {
 
 void loadMode(JsonObject& modeJson) {
     for (JsonObject::iterator it=modeJson.begin(); it!=modeJson.end(); ++it) {
-        char pinBuffer[3];
         const char* key = it->key;
         int pinNumber = atoi(key);
         GpioMode.set(pinNumber, it->value.asString());
@@ -1050,7 +904,6 @@ void loadActions(JsonArray& actionsJson) {
 void loadGpioConfig(JsonObject& gpio) {
   for (JsonObject::iterator it=gpio.begin(); it!=gpio.end(); ++it)
   {
-    char pinBuffer[3];
     const char* key = it->key;
     int pinNumber = atoi(key);
     makeDevicePinPairing(pinNumber, it->value.asString());
@@ -1141,11 +994,12 @@ void buildShorterStateString(char* stateJson) {
 
   injectConfig(config);
   
-  StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
+  //StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
   // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
-  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
-  strcpy(readSensesResultCopy, readSensesResult);
-  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
+  //char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+  //strcpy(readSensesResultCopy, readSensesResult);
+
+  //reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
   
   int actualLength = reported.measureLength();
   if (actualLength >= MAX_STATE_JSON_LENGTH) {
@@ -1156,39 +1010,39 @@ void buildShorterStateString(char* stateJson) {
   return;
 }
 
-void buildStateString(char* stateJson) {
-  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
-
-  JsonObject& root = jsonBuffer.createObject();
-  JsonObject& stateObject = root.createNestedObject("state");
-  JsonObject& reported = stateObject.createNestedObject("reported");
-
-  reported["wifi"] = WiFi.SSID();
-  reported["state"] = STATE_STRING[state];
-  reported["version"] = VERSION;
-  reported["b"] = boot_time;
-  
-  JsonObject& gpio = reported.createNestedObject("write");
-  injectGpioState(gpio);
-  
-  JsonObject& config = reported.createNestedObject("config");
-
-  injectConfig(config);
-  
-  StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
-  // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
-  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
-  strcpy(readSensesResultCopy, readSensesResult);
-  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
-  
-  int actualLength = root.measureLength();
-  if (actualLength >= MAX_STATE_JSON_LENGTH) {
-    Serial.println("!!! resulting JSON is too long, expect errors");
-  }
-
-  root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
-  return;
-}
+//void buildStateString(char* stateJson) {
+//  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
+//
+//  JsonObject& root = jsonBuffer.createObject();
+//  JsonObject& stateObject = root.createNestedObject("state");
+//  JsonObject& reported = stateObject.createNestedObject("reported");
+//
+//  reported["wifi"] = WiFi.SSID();
+//  reported["state"] = STATE_STRING[state];
+//  reported["version"] = VERSION;
+//  reported["b"] = boot_time;
+//  
+//  JsonObject& gpio = reported.createNestedObject("write");
+//  injectGpioState(gpio);
+//  
+//  JsonObject& config = reported.createNestedObject("config");
+//
+//  injectConfig(config);
+//  
+//  StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
+//  // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
+//  char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
+//  strcpy(readSensesResultCopy, readSensesResult);
+//  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
+//  
+//  int actualLength = root.measureLength();
+//  if (actualLength >= MAX_STATE_JSON_LENGTH) {
+//    Serial.println("!!! resulting JSON is too long, expect errors");
+//  }
+//
+//  root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
+//  return;
+//}
 
 void injectGpioState(JsonObject& gpio) { 
   for (int i = 0; i < GpioState.getSize(); ++i) {

@@ -5,13 +5,12 @@
         STATE(boot)   \
         STATE(connect_to_wifi) \
         STATE(wifi_wait) \
-        STATE(connect_to_internet) \
-        STATE(connect_to_mqtt) \
         STATE(serve_locally) \
         STATE(load_config) \
+        STATE(publish_state) \
         STATE(update_config) \
         STATE(read_senses) \
-        STATE(publish) \
+        STATE(publish_senses) \
         STATE(ota_update)    \
         STATE(cool_off)  \
         STATE(hard_reset)  \
