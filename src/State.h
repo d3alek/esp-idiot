@@ -14,6 +14,7 @@
         STATE(ota_update)    \
         STATE(cool_off)  \
         STATE(hard_reset)  \
+        STATE(deep_sleep)  \
 
 #define GENERATE_ENUM(ENUM) ENUM,
 #define GENERATE_STRING(STRING) #STRING,

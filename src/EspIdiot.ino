@@ -53,7 +53,12 @@
 
 #include "Sense.h"
 
+#ifdef LOW_POWER
+#define I2C_POWER -1
+#else
 #define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
+#endif
+
 #define I2C_PIN_1 14 // SDA
 #define I2C_PIN_2 12 // SDC
 
@@ -101,6 +106,7 @@ int oneWirePin = -1;
 int servoPin = -1;
 Servo servo;
 char readSensesResult[MAX_READ_SENSES_RESULT_SIZE] = "{}";
+char sensesWriteString[MAX_READ_SENSES_RESULT_SIZE] = "{}";
 
 char finalState[MAX_STATE_JSON_LENGTH];
 
@@ -120,6 +126,13 @@ OLED oled(I2C_PIN_1, I2C_PIN_2);
 DisplayController display(oled);
 
 unsigned long boot_time = 0;
+
+#ifdef LOW_POWER
+bool powerMode = LOW;
+ADC_MODE(ADC_VCC);
+#else
+bool powerMode = HIGH;
+#endif
 
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
@@ -187,6 +200,7 @@ void hardReset() {
 
 void setup(void)
 {
+    pinMode(16, INPUT); // to turn off internal pull-down
     last_loop = millis();
     tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
 
@@ -231,7 +245,10 @@ void setup(void)
     ensureGpio(PIN_A, 0);
     ensureGpio(PIN_B, 0);
     ensureGpio(PIN_C, 0);
-    ensureGpio(I2C_POWER, 0);
+
+    if (powerMode == HIGH) {
+      ensureGpio(I2C_POWER, 0);
+    }
 
     pinMode(HARD_RESET_PIN, INPUT);
     delay(1000);
@@ -422,20 +439,22 @@ void loop(void)
         toState(read_senses);
     }
     else if (state == read_senses) {
-        if (i2cPowerStartTime == 0) {
-            Serial.printf("[power up I2C]\n");
-            i2cPowerStartTime = millis();
-            pinMode(I2C_POWER, OUTPUT);
-            digitalWrite(I2C_POWER, 1);
-        }
+        if (powerMode == HIGH) {
+          if (i2cPowerStartTime == 0) {
+              Serial.printf("[power up I2C]\n");
+              i2cPowerStartTime = millis();
+              pinMode(I2C_POWER, OUTPUT);
+              digitalWrite(I2C_POWER, 1);
+          }
 
-        if (millis() - i2cPowerStartTime < I2C_POWER_WAIT_SECONDS * 1000) {
-            Serial.print('.');
-            delay(50);
-            return;
+          if (millis() - i2cPowerStartTime < I2C_POWER_WAIT_SECONDS * 1000) {
+              Serial.print('.');
+              delay(50);
+              return;
+          }
+          
+          Serial.println();
         }
-        
-        Serial.println();
 
         StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
         // parseObject and print the same char array do not play well, so pass it a copy here
@@ -468,9 +487,14 @@ void loop(void)
         }
 
         IdiotI2C.readI2C(I2C_PIN_1, I2C_PIN_2, senses);
-        int brightness = int(((1024 - analogRead(A0))*100) / 1024);
 
-        senses["A0"] = brightness;
+        if (powerMode == HIGH) {
+          int analogIn = int(((1024 - analogRead(A0))*100) / 1024);
+          senses["A0"] = analogIn;
+        }
+        else {
+          senses["vcc"] = ESP.getVcc();
+        }
 
         if (boot_time != 0L) {
             senses["time"] = seconds_today();
@@ -489,7 +513,9 @@ void loop(void)
 
         doActions(senses);
 
-        digitalWrite(I2C_POWER, 0);
+        if (powerMode == HIGH) {
+          digitalWrite(I2C_POWER, 0);
+        }
 
         display.update(senses);
         toState(publish_senses);
@@ -504,12 +530,15 @@ void loop(void)
           client = &realClient;
         #endif
 
+        buildSensesWriteString(sensesWriteString);
+        Serial.println(sensesWriteString);
+
         HTTPClient http;
         char url[100];
         buildUrl(url, POST_SENSES_URL_PATH);
         Serial.printf("? connect to %s\n", url);
         if (http.begin(*client, url)) {
-          int httpCode = http.POST((uint8_t*)readSensesResult, strlen(readSensesResult)); 
+          int httpCode = http.POST((uint8_t*)sensesWriteString, strlen(sensesWriteString)); 
           Serial.println("? send POST with senses");
 
           if (httpCode == HTTP_CODE_OK || httpCode == 201) {
@@ -532,6 +561,10 @@ void loop(void)
         toState(cool_off);
     }
     else if (state == cool_off) {
+        //if (powerMode == LOW) {
+        //  toState(deep_sleep);
+        //  return;
+        //}
         if (coolOffStartTime == 0) {
             coolOffStartTime = millis();
         }
@@ -543,6 +576,9 @@ void loop(void)
             detachInterrupt(DISPLAY_CONTROL_PIN); 
             toState(boot);
         }
+    }
+    else if (state == deep_sleep) {
+      EspControl.deepSleep(5);
     }
 }
 
@@ -1011,6 +1047,16 @@ void injectActions(JsonArray& actionsJson) {
   }
 }
 
+void buildSensesWriteString(char* result) {
+  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
+  JsonObject& sensesWrite = jsonBuffer.createObject();
+
+  sensesWrite["senses"] = RawJson(readSensesResult);
+  JsonObject& gpio = sensesWrite.createNestedObject("write");
+  injectGpioState(gpio);
+  sensesWrite.printTo(result, MAX_READ_SENSES_RESULT_SIZE);
+}
+
 void buildShorterStateString(char* stateJson) {
   StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
 
@@ -1020,9 +1066,6 @@ void buildShorterStateString(char* stateJson) {
   reported["state"] = STATE_STRING[state];
   reported["version"] = VERSION;
   reported["b"] = boot_time;
-  
-  JsonObject& gpio = reported.createNestedObject("write");
-  injectGpioState(gpio);
   
   JsonObject& config = reported.createNestedObject("config");
 
