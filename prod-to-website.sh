@@ -16,7 +16,7 @@ fi
 
 echo "Pushing prod version $VERSION..."
 
-pio run && \
+pio run -e esp12e && \
     cp .pioenvs/esp12e/firmware.bin $BIN_FILE 
     scp -o "StrictHostKeyChecking no" -P 8902 .pioenvs/esp12e/firmware.bin shiptechnic@otselo.eu:$BIN_FILE && \
     echo "Done."

@@ -1,4 +1,4 @@
-#define VERSION "z111.1"
+#define VERSION "z111.2"
 
 #include <Arduino.h>
 #include <Servo.h>
