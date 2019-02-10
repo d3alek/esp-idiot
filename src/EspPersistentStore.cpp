@@ -79,7 +79,6 @@ bool wifiPasswordStored() {
 void EspPersistentStore::readWifiName(char* wifiName) {
   if (!wifiNameStored()) {
     Serial.println("Could not read wifi name because none stored");
-    wifiName = NULL;
   }
 
   _readString(WIFI_NAME_OFFSET, wifiName, WIFI_NAME_MAX_SIZE);
@@ -88,7 +87,6 @@ void EspPersistentStore::readWifiName(char* wifiName) {
 void EspPersistentStore::readWifiPassword(char* wifiPassword) {
   if (!wifiPasswordStored()) {
     Serial.println("Could not read wifi password because none stored");
-    wifiPassword = NULL;
   }
 
   _readString(WIFI_PASSWORD_OFFSET, wifiPassword, WIFI_PASS_MAX_SIZE);

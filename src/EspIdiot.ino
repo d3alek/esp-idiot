@@ -53,6 +53,8 @@
 
 #include "Sense.h"
 
+#include "EspBattery.h"
+
 #ifdef LOW_POWER
 #define I2C_POWER -1
 #else
@@ -133,6 +135,9 @@ ADC_MODE(ADC_VCC);
 #else
 bool powerMode = HIGH;
 #endif
+
+#define DEFAULT_SLEEP_SECONDS 60
+int sleepSeconds;
 
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
@@ -230,16 +235,21 @@ void setup(void)
 
     WiFi.mode(WIFI_STA);
     WiFiMulti.addAP(ADMIN_WIFI_SSID, ADMIN_WIFI_PASSWORD);
-    char wifiName[WIFI_NAME_MAX_SIZE];
-    PersistentStore.readWifiName(wifiName);
-    char wifiPassword[WIFI_PASS_MAX_SIZE];
-    PersistentStore.readWifiPassword(wifiPassword);
-    Serial.printf("WiFi config: %s %s\n", wifiName, wifiPassword);
-    if (strlen(wifiPassword) == 0) {
-        WiFiMulti.addAP(wifiName);
+    if (PersistentStore.wifiCredentialsStored()) {
+      char wifiName[WIFI_NAME_MAX_SIZE] = "";
+      PersistentStore.readWifiName(wifiName);
+      char wifiPassword[WIFI_PASS_MAX_SIZE] = "";
+      PersistentStore.readWifiPassword(wifiPassword);
+      Serial.printf("? wifi config: %s %s\n", wifiName, wifiPassword);
+      if (strlen(wifiPassword) == 0) {
+          WiFiMulti.addAP(wifiName);
+      }
+      else {
+          WiFiMulti.addAP(wifiName, wifiPassword);
+      }
     }
     else {
-        WiFiMulti.addAP(wifiName, wifiPassword);
+      Serial.println("! No wifi config stored, only know of admin wifi for now");
     }
 
     ensureGpio(PIN_A, 0);
@@ -316,6 +326,8 @@ void loop(void)
         oneWirePin = DEFAULT_ONE_WIRE_PIN;
         servoPin = -1;
 
+        sleepSeconds = DEFAULT_SLEEP_SECONDS;
+
         if (!PersistentStore.wifiCredentialsStored()) {
             toState(serve_locally);
             serveLocallySeconds = 60;
@@ -362,14 +374,13 @@ void loop(void)
         }
         else if (millis() - wifiWaitStartTime > MAX_WIFI_WAIT_SECONDS * 1000){
             Serial.println("\n? waited for wifi enough, continue without.");
+            toState(load_config); 
         }
         else {
             Serial.print('.');
             delay(50);
         }
-        toState(load_config); 
     }
-
     else if (state == load_config) {
         char config[CONFIG_MAX_SIZE];
         PersistentStore.readConfig(config);
@@ -494,6 +505,7 @@ void loop(void)
         }
         else {
           senses["vcc"] = ESP.getVcc();
+          senses["b"] = Battery::toPercent(senses["vcc"]);
         }
 
         if (boot_time != 0L) {
@@ -561,10 +573,10 @@ void loop(void)
         toState(cool_off);
     }
     else if (state == cool_off) {
-        //if (powerMode == LOW) {
-        //  toState(deep_sleep);
-        //  return;
-        //}
+        if (powerMode == LOW) {
+          toState(deep_sleep);
+          return;
+        }
         if (coolOffStartTime == 0) {
             coolOffStartTime = millis();
         }
@@ -578,7 +590,7 @@ void loop(void)
         }
     }
     else if (state == deep_sleep) {
-      EspControl.deepSleep(5);
+      EspControl.deepSleep(sleepSeconds);
     }
 }
 
@@ -930,6 +942,10 @@ void loadConfigFromJson(JsonObject& config, bool from_server) {
         configChanged = true;
         loadActions(config["actions"]);
     }
+    if (config.containsKey("sleep")) {
+      configChanged = true;
+      sleepSeconds = config["sleep"];
+    }
 }
 
 int seconds_since_boot() {
@@ -1024,6 +1040,10 @@ void injectConfig(JsonObject& config) {
 
   JsonObject& mode = config.createNestedObject("mode");
   injectGpioMode(mode);
+  
+  if (powerMode == LOW) {
+    config["sleep"] = sleepSeconds;
+  }
 }
 
 void saveConfig() {
@@ -1063,20 +1083,11 @@ void buildShorterStateString(char* stateJson) {
   JsonObject& reported = jsonBuffer.createObject();
 
   reported["wifi"] = WiFi.SSID();
-  reported["state"] = STATE_STRING[state];
   reported["version"] = VERSION;
-  reported["b"] = boot_time;
   
   JsonObject& config = reported.createNestedObject("config");
 
   injectConfig(config);
-  
-  //StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
-  // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
-  //char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
-  //strcpy(readSensesResultCopy, readSensesResult);
-
-  //reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
   
   int actualLength = reported.measureLength();
   if (actualLength >= MAX_STATE_JSON_LENGTH) {
