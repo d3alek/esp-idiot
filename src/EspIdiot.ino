@@ -80,10 +80,10 @@
 
 #define SENSE_EXPECTATIONS_WINDOW 10
 
-const char* fingerprint = "CE:68:2D:E6:49:12:D5:34:95:03:5A:B7:7D:DC:41:75:FB:68:2C:23";
+const char* fingerprint = "B4:7D:DA:77:6C:C8:1B:1E:18:59:32:AB:53:77:66:7F:03:C4:9F:8F";
 
-const char* POST_STATE_URL_PATH = "/idiot/_design/idiot-state/_update/state/";
-const char* POST_SENSES_URL_PATH = "/idiot/_design/idiot-senses/_update/senses/";
+const char* POST_STATE_URL_PATH = "/idiot/_design/idiot-state/_update/state/thing/";
+const char* POST_SENSES_URL_PATH = "/idiot/_design/idiot-senses/_update/senses/thing/";
 
 const int chipId = ESP.getChipId();
 
@@ -399,7 +399,7 @@ void loop(void)
 
         #ifdef USE_SSL
           std::unique_ptr<WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
-          client->setFingerprint(fingerprint);
+          client->setInsecure();
         #else
           WiFiClient* client;
           WiFiClient realClient;
@@ -535,7 +535,7 @@ void loop(void)
     else if (state == publish_senses) {
         #ifdef USE_SSL
           std::unique_ptr<WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
-          client->setFingerprint(fingerprint);
+          client->setInsecure();
         #else
           WiFiClient* client;
           WiFiClient realClient;
