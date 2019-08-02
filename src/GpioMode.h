@@ -5,7 +5,7 @@
 #define AUTO 2
 #define PIN_A 5
 #define PIN_B 4
-#define PIN_C 13
+#define PIN_C 14
 
 class IdiotGpioMode {
   public:

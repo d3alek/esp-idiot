@@ -1,4 +1,4 @@
-#define VERSION "z112"
+#define VERSION "z113"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -21,7 +21,7 @@
 #include <OneWire.h>
 #include "OneWireSensors.h"
 
-#define DEFAULT_ONE_WIRE_PIN 2
+#define DEFAULT_ONE_WIRE_PIN 0
 
 #include <Wire.h>
 #include "I2C.h"
@@ -69,6 +69,7 @@
 #define DELTA_WAIT_SECONDS 2
 #define MAX_WIFI_WAIT_SECONDS 30
 #define COOL_OFF_WAIT_SECONDS 15
+#define DEEP_SLEEP_DELAY_SECONDS 5
 #define I2C_POWER_WAIT_SECONDS 3
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
@@ -109,6 +110,7 @@ int actionsSize;
 
 
 unsigned long coolOffStartTime;
+unsigned long deepSleepDelayStartTime;
 unsigned long i2cPowerStartTime;
 unsigned long wifiWaitStartTime;
 unsigned long updateConfigStartTime;
@@ -161,7 +163,10 @@ void toState(state_enum newState) {
 // See https://github.com/esp8266/Arduino/issues/1722
 void updateFromS3(char* updatePath) {
   toState(ota_update);
-  display.refresh(state, true);
+
+  if (powerMode == HIGH) {
+    display.refresh(state, true);
+  }
 
   char updateUrl[100];
   strcpy(updateUrl, UPDATE_URL);
@@ -266,16 +271,18 @@ void setup(void)
 
     PersistentStore.begin();
 
-    Wire.pins(I2C_PIN_1, I2C_PIN_2);
-    Wire.begin();
-    Wire.setClockStretchLimit(2000); // in µs
-    display.begin();
+    if (powerMode == HIGH) {
+      Wire.pins(I2C_PIN_1, I2C_PIN_2);
+      Wire.begin();
+      Wire.setClockStretchLimit(2000); // in µs
+      display.begin();
+    }
 
     WiFi.mode(WIFI_STA);
 
-    ensureGpio(PIN_A, 0);
-    ensureGpio(PIN_B, 0);
-    ensureGpio(PIN_C, 0);
+    //ensureGpio(PIN_A, 0);
+    //ensureGpio(PIN_B, 0);
+    //ensureGpio(PIN_C, 0);
 
     if (powerMode == HIGH) {
       ensureGpio(I2C_POWER, 0);
@@ -303,7 +310,9 @@ void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
 void loop(void)
 {
     last_loop = millis();
-    display.refresh(state);
+    if (powerMode == HIGH) {
+      display.refresh(state);
+    }
     idiotWifiServer.handleClient();
 
     if (mqttClient.connected()) {
@@ -319,6 +328,7 @@ void loop(void)
         gpioStateChanged = false;
 
         coolOffStartTime = 0;
+        deepSleepDelayStartTime = 0;
         i2cPowerStartTime = 0;
         updateConfigStartTime = 0;
         wifiWaitStartTime = 0;
@@ -413,7 +423,7 @@ void loop(void)
             Serial.printf("? connection check failed. GET code: %d\n", httpCode);
             Serial.println(http.getString());
 
-            Serial.println("? check for connection again]");
+            Serial.println("? check for connection again");
             http.begin(googleGenerate204);
             httpCode = http.GET();
             if (httpCode != 204) {
@@ -553,7 +563,9 @@ void loop(void)
           digitalWrite(I2C_POWER, 0);
         }
 
-        display.update(senses);
+        if (powerMode == HIGH) {
+          display.update(senses);
+        }
         toState(publish);
     }
     else if (state == publish) {
@@ -597,7 +609,16 @@ void loop(void)
         }
     }
     else if (state == deep_sleep) {
-      EspControl.deepSleep(sleepSeconds);
+      if (deepSleepDelayStartTime == 0) {
+        deepSleepDelayStartTime = millis();
+      }
+      else if (millis() - deepSleepDelayStartTime < DEEP_SLEEP_DELAY_SECONDS * 1000) {
+        Serial.print('.');
+        delay(100);
+      }
+      else {
+        EspControl.deepSleep(sleepSeconds);
+      }
     }
 }
 
