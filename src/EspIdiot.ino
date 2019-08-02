@@ -1,4 +1,4 @@
-#define VERSION "z111"
+#define VERSION "z112"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -50,8 +50,14 @@
 #include "DisplayController.h"
 
 #include "Sense.h"
+#include "EspBattery.h"
 
+#ifdef LOW_POWER
+#define I2C_POWER -1
+#else
 #define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
+#endif
+
 #define I2C_PIN_1 14 // SDA
 #define I2C_PIN_2 12 // SDC
 
@@ -113,7 +119,18 @@ float serveLocallySeconds;
 OLED oled(I2C_PIN_1, I2C_PIN_2);
 DisplayController display(oled);
 
-unsigned long boot_time = -1;
+unsigned long boot_time = 0L;
+
+#ifdef LOW_POWER
+bool powerMode = LOW;
+ADC_MODE(ADC_VCC);
+#else
+bool powerMode = HIGH;
+#endif
+
+int sleepSeconds;
+
+#define DEFAULT_SLEEP_SECONDS 60
 
 // source: https://github.com/esp8266/Arduino/issues/1532
 #include <Ticker.h>
@@ -259,7 +276,10 @@ void setup(void)
     ensureGpio(PIN_A, 0);
     ensureGpio(PIN_B, 0);
     ensureGpio(PIN_C, 0);
-    ensureGpio(I2C_POWER, 0);
+
+    if (powerMode == HIGH) {
+      ensureGpio(I2C_POWER, 0);
+    }
 
     pinMode(HARD_RESET_PIN, INPUT);
     delay(1000);
@@ -314,6 +334,8 @@ void loop(void)
         dht22Pin = -1;
         oneWirePin = DEFAULT_ONE_WIRE_PIN;
         servoPin = -1;
+
+        sleepSeconds = DEFAULT_SLEEP_SECONDS;
 
         if (!PersistentStore.wifiCredentialsStored()) {
             toState(serve_locally);
@@ -452,20 +474,22 @@ void loop(void)
         }
     }
     else if (state == read_senses) {
-        if (i2cPowerStartTime == 0) {
-            Serial.printf("[power up I2C]\n");
-            i2cPowerStartTime = millis();
-            pinMode(I2C_POWER, OUTPUT);
-            digitalWrite(I2C_POWER, 1);
-        }
+        if (powerMode == HIGH) {
+          if (i2cPowerStartTime == 0) {
+              Serial.printf("[power up I2C]\n");
+              i2cPowerStartTime = millis();
+              pinMode(I2C_POWER, OUTPUT);
+              digitalWrite(I2C_POWER, 1);
+          }
 
-        if (millis() - i2cPowerStartTime < I2C_POWER_WAIT_SECONDS * 1000) {
-            Serial.print('.');
-            delay(50);
-            return;
+          if (millis() - i2cPowerStartTime < I2C_POWER_WAIT_SECONDS * 1000) {
+              Serial.print('.');
+              delay(50);
+              return;
+          }
+          
+          Serial.println();
         }
-        
-        Serial.println();
 
         StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
         // parseObject and print the same char array do not play well, so pass it a copy here
@@ -498,11 +522,17 @@ void loop(void)
         }
 
         IdiotI2C.readI2C(I2C_PIN_1, I2C_PIN_2, senses);
-        int brightness = int(((1024 - analogRead(A0))*100) / 1024);
 
-        senses["A0"] = brightness;
+        if (powerMode == HIGH) {
+          int analogIn = int(((1024 - analogRead(A0))*100) / 1024);
+          senses["A0"] = analogIn;
+        }
+        else {
+          senses["vcc"] = ESP.getVcc();
+          senses["b"] = Battery::toPercent(senses["vcc"]);
+        }  
 
-        if (boot_time != -1) {
+        if (boot_time != 0L) {
             senses["time"] = seconds_today();
         }
 
@@ -519,7 +549,9 @@ void loop(void)
 
         doActions(senses);
 
-        digitalWrite(I2C_POWER, 0);
+        if (powerMode == HIGH) {
+          digitalWrite(I2C_POWER, 0);
+        }
 
         display.update(senses);
         toState(publish);
@@ -548,6 +580,10 @@ void loop(void)
         }
     }
     else if (state == cool_off) {
+        if (powerMode == LOW) {
+          toState(deep_sleep);
+          return;
+        }
         if (coolOffStartTime == 0) {
             coolOffStartTime = millis();
         }
@@ -559,6 +595,9 @@ void loop(void)
             detachInterrupt(DISPLAY_CONTROL_PIN); 
             toState(boot);
         }
+    }
+    else if (state == deep_sleep) {
+      EspControl.deepSleep(sleepSeconds);
     }
 }
 
@@ -685,7 +724,7 @@ void updateExpectations(JsonObject& senses) {
         previous_ssd = sense.ssd;
 
         if (previous_expectation == WRONG_VALUE || previous_ssd == WRONG_VALUE) {
-            Serial.printf("? no expectations yet for %s, seeding with current value %d\n", key, value);
+            Serial.printf("? no expectations yet for %s, seeding with current value %.2f\n", key, value);
             previous_expectation = value;
             previous_ssd = 5 * 5 * SENSE_EXPECTATIONS_WINDOW * SENSE_EXPECTATIONS_WINDOW; // variance is at least 5^2 
         }
@@ -744,10 +783,10 @@ void doActions(JsonObject& senses) {
                 int value = sense.value; 
                 Serial.printf("? found sense %s for the action with value [%d]\n", key, value);
                 if (value == WRONG_VALUE) {
-                    Serial.printf("!!! could not parse or wrong value\n", value);
+                    Serial.printf("!!! could not parse or wrong value %d\n", value);
                 }
                 if (sense.wrong) {
-                    Serial.printf("? ignoring because value is marked as wrong\n", key);
+                    Serial.printf("? ignoring because value is marked as wrong %s\n", key);
                     Serial.println("? preserving GPIO state");
                     GpioState.set(action.getGpio(), digitalRead(action.getGpio()));
                     continue;
@@ -925,6 +964,10 @@ void loadConfigFromJson(JsonObject& config, bool from_server) {
         int unix_time = config["t"];
         boot_time = unix_time - seconds_since_boot();
     }
+    if (config.containsKey("sleep")) {
+      configChanged = true;
+      sleepSeconds = config["sleep"];
+    }
 }
 
 int seconds_since_boot() {
@@ -937,7 +980,6 @@ int seconds_today() {
 
 void loadMode(JsonObject& modeJson) {
     for (JsonObject::iterator it=modeJson.begin(); it!=modeJson.end(); ++it) {
-        char pinBuffer[3];
         const char* key = it->key;
         int pinNumber = atoi(key);
         GpioMode.set(pinNumber, it->value.asString());
@@ -970,7 +1012,6 @@ void loadActions(JsonArray& actionsJson) {
 void loadGpioConfig(JsonObject& gpio) {
   for (JsonObject::iterator it=gpio.begin(); it!=gpio.end(); ++it)
   {
-    char pinBuffer[3];
     const char* key = it->key;
     int pinNumber = atoi(key);
     makeDevicePinPairing(pinNumber, it->value.asString());
@@ -1021,6 +1062,10 @@ void injectConfig(JsonObject& config) {
 
   JsonObject& mode = config.createNestedObject("mode");
   injectGpioMode(mode);
+
+  if (powerMode == LOW) {
+    config["sleep"] = sleepSeconds;
+  }
 }
 
 void saveConfig() {
