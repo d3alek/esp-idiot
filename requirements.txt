@@ -5,5 +5,5 @@ esptool==1.1
 lockfile==0.12.2
 platformio==3.1.0
 pyserial==3.1.1
-requests==2.11.1
+requests==2.20.0
 semantic-version==2.5.0
