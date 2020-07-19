@@ -1,4 +1,4 @@
-#define VERSION "z112"
+#define VERSION "z124"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -46,17 +46,9 @@
 #include "I2CSoilMoistureSensor.h"
 
 #include "OLED.h"
-#include "Displayable.h"
-#include "DisplayController.h"
 
 #include "Sense.h"
 #include "EspBattery.h"
-
-#ifdef LOW_POWER
-#define I2C_POWER -1
-#else
-#define I2C_POWER 16 // attiny's reset - 0 turns them off 1 turns them on
-#endif
 
 #define I2C_PIN_1 14 // SDA
 #define I2C_PIN_2 12 // SDC
@@ -66,10 +58,9 @@
 #define MAX_STATE_JSON_LENGTH 740
 
 #define MAX_READ_SENSES_RESULT_SIZE 512
-#define DELTA_WAIT_SECONDS 2
+#define DELTA_WAIT_SECONDS 5
 #define MAX_WIFI_WAIT_SECONDS 30
 #define COOL_OFF_WAIT_SECONDS 15
-#define I2C_POWER_WAIT_SECONDS 3
 #define DEFAULT_PUBLISH_INTERVAL 60
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
@@ -101,12 +92,16 @@ int oneWirePin = -1;
 int servoPin = -1;
 Servo servo;
 char readSensesResult[MAX_READ_SENSES_RESULT_SIZE] = "{}";
+int waterPin = -1;
+bool ensurePumpIsOff = false;
+volatile unsigned long waterPulseCount = 0;  
+
+#define PUMP 5
 
 char finalState[MAX_STATE_JSON_LENGTH];
 
 Action actions[MAX_ACTIONS_SIZE];
 int actionsSize;
-
 
 unsigned long coolOffStartTime;
 unsigned long i2cPowerStartTime;
@@ -115,9 +110,13 @@ unsigned long updateConfigStartTime;
 unsigned long serveLocallyStartMs;
 float serveLocallySeconds;
 
+unsigned long pumpStartTime = 0L;
+unsigned long pumpStopTime = 0L;
+#define PUMP_START_WAIT_SECONDS 30
+#define PUMP_OFF_WAIT_MINUTES 10
+
 #define DISPLAY_CONTROL_PIN 0
 OLED oled(I2C_PIN_1, I2C_PIN_2);
-DisplayController display(oled);
 
 unsigned long boot_time = 0L;
 
@@ -161,7 +160,6 @@ void toState(state_enum newState) {
 // See https://github.com/esp8266/Arduino/issues/1722
 void updateFromS3(char* updatePath) {
   toState(ota_update);
-  display.refresh(state, true);
 
   char updateUrl[100];
   strcpy(updateUrl, UPDATE_URL);
@@ -190,7 +188,7 @@ void updateFromS3(char* updatePath) {
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.printf("\n? message arrived [%s]\n", topic);
     char normalizedPayload[length+1];
-    for (int i=0;i<length;i++) {
+    for (unsigned int i = 0;i < length; i++) {
         normalizedPayload[i] = (char)payload[i];
     }
     normalizedPayload[length]='\0';
@@ -266,44 +264,22 @@ void setup(void)
 
     PersistentStore.begin();
 
-    Wire.pins(I2C_PIN_1, I2C_PIN_2);
-    Wire.begin();
-    Wire.setClockStretchLimit(2000); // in µs
-    display.begin();
-
     WiFi.mode(WIFI_STA);
 
     ensureGpio(PIN_A, 0);
     ensureGpio(PIN_B, 0);
     ensureGpio(PIN_C, 0);
 
-    if (powerMode == HIGH) {
-      ensureGpio(I2C_POWER, 0);
-    }
-
     pinMode(HARD_RESET_PIN, INPUT);
     delay(1000);
     if(!digitalRead(HARD_RESET_PIN)) {
         hardReset();
-    }
-
-    
-}
-
-volatile unsigned long lastInterruptTime = 0;
-volatile unsigned long debounceDelay = 300; 
-
-void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
-    if (millis() - lastInterruptTime > debounceDelay) {
-        display.changeMode();
-        lastInterruptTime = millis();
     }
 }
 
 void loop(void)
 {
     last_loop = millis();
-    display.refresh(state);
     idiotWifiServer.handleClient();
 
     if (mqttClient.connected()) {
@@ -311,13 +287,11 @@ void loop(void)
     }
 
     if (state == boot) {
-        pinMode(DISPLAY_CONTROL_PIN, INPUT);
-        attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
-
         configChanged = false;
         configReceived = false;
         gpioStateChanged = false;
 
+        // this happens every loop turn!
         coolOffStartTime = 0;
         i2cPowerStartTime = 0;
         updateConfigStartTime = 0;
@@ -334,6 +308,7 @@ void loop(void)
         dht22Pin = -1;
         oneWirePin = DEFAULT_ONE_WIRE_PIN;
         servoPin = -1;
+        waterPin = -1;
 
         sleepSeconds = DEFAULT_SLEEP_SECONDS;
 
@@ -459,7 +434,6 @@ void loop(void)
         }
 
         if (!configReceived && millis() - updateConfigStartTime < DELTA_WAIT_SECONDS * 1000) {
-            Serial.print('.');    
             return;
         }
         else {
@@ -474,23 +448,6 @@ void loop(void)
         }
     }
     else if (state == read_senses) {
-        if (powerMode == HIGH) {
-          if (i2cPowerStartTime == 0) {
-              Serial.printf("[power up I2C]\n");
-              i2cPowerStartTime = millis();
-              pinMode(I2C_POWER, OUTPUT);
-              digitalWrite(I2C_POWER, 1);
-          }
-
-          if (millis() - i2cPowerStartTime < I2C_POWER_WAIT_SECONDS * 1000) {
-              Serial.print('.');
-              delay(50);
-              return;
-          }
-          
-          Serial.println();
-        }
-
         StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
         // parseObject and print the same char array do not play well, so pass it a copy here
         JsonObject& senses = jsonBuffer.createObject();
@@ -521,6 +478,27 @@ void loop(void)
             IdiotOneWire.readOneWire(oneWirePin, senses);
         }
 
+        if (waterPin != -1) {
+          detachInterrupt(waterPin);
+          if (ensurePumpIsOff == false
+            && waterPulseCount == 0L
+            && (pumpStartTime != 0L && millis() - pumpStartTime > PUMP_START_WAIT_SECONDS * 1000)) {
+            ensurePumpIsOff = true;
+            Serial.printf("? ensure pump is off\n");
+          }
+          if (ensurePumpIsOff
+            && (pumpStopTime != 0L && millis() - pumpStopTime > PUMP_OFF_WAIT_MINUTES * 60 * 1000)) {
+            ensurePumpIsOff = false;
+            Serial.printf("? stop ensuring pump is off\n");
+          }
+          senses["wpulse"] = waterPulseCount;
+          senses["mliters"] = 1000*waterPulseCount/450.;
+          waterPulseCount = 0;
+
+          pinMode(waterPin, INPUT);
+          attachInterrupt(waterPin, waterInterrupt, FALLING);
+        }
+
         IdiotI2C.readI2C(I2C_PIN_1, I2C_PIN_2, senses);
 
         if (powerMode == HIGH) {
@@ -549,11 +527,6 @@ void loop(void)
 
         doActions(senses);
 
-        if (powerMode == HIGH) {
-          digitalWrite(I2C_POWER, 0);
-        }
-
-        display.update(senses);
         toState(publish);
     }
     else if (state == publish) {
@@ -592,7 +565,6 @@ void loop(void)
             delay(100);
         }
         else {
-            detachInterrupt(DISPLAY_CONTROL_PIN); 
             toState(boot);
         }
     }
@@ -639,6 +611,9 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
 }
 
 bool meetsExpectations(const char* name, Sense sense) {
+    if (!strcmp(name, "wpulse") || !strcmp(name, "mliters")) {
+      return true;
+    }
     int value = sense.value;
     float expectation = sense.expectation;
     if (expectation == WRONG_VALUE || sense.ssd == WRONG_VALUE) {
@@ -794,8 +769,17 @@ void doActions(JsonObject& senses) {
                 bool aboveThresholdGpioState = action.getAboveThresholdGpioState();
                 if (time_action) {
                     if (value >= action.getThreshold() && value <= action.getThreshold() + action.getDelta()) {
+                        if (action.getGpio() == PUMP) {
+                          if (ensurePumpIsOff) {
+                            Serial.printf("? pump is within time window but no pulses detected so pump should be off\n"); 
+                            ensureGpio(action.getGpio(), !aboveThresholdGpioState);
+                            continue;
+                          }
+                        }
                         Serial.printf("? time is within action period - GPIO should be %s\n", aboveThresholdGpioState == LOW ? "low" : "high");
-                        ensureGpio(action.getGpio(), aboveThresholdGpioState);
+                        if (action.getGpio() == PUMP) {
+                          ensureGpio(action.getGpio(), aboveThresholdGpioState);
+                        }
                     }
                     else {
                         Serial.printf("? time is outside of action period - GPIO should be %s\n", aboveThresholdGpioState == LOW ? "high" : "low");
@@ -875,6 +859,25 @@ void ensureGpio(int gpio, int state) {
     Serial.printf("? gpio %d to %d\n", gpio, state);
     pinMode(gpio, OUTPUT);
     digitalWrite(gpio, state);
+
+    if (gpio == PUMP) {
+      if (state == HIGH && pumpStartTime == 0L) {
+        Serial.printf("? pump starts now\n");
+        pumpStartTime = millis();
+        pumpStopTime = 0L;
+        if (waterPin != -1) {
+          pinMode(waterPin, INPUT);
+          attachInterrupt(waterPin, waterInterrupt, FALLING);
+        }
+      }
+      if (state == LOW) {
+        if (pumpStartTime != 0L) {
+          Serial.printf("? pump stops now\n");
+        }
+        pumpStartTime = 0L;
+        pumpStopTime = millis();
+      }
+    }
   }
   GpioState.set(gpio, state);
 }
@@ -1026,6 +1029,9 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
   else if (strcmp(device, "DHT22") == 0) {
     dht22Pin = pinNumber;
   }
+  else if (strcmp(device, "DHT22") == 0) {
+    dht22Pin = pinNumber;
+  }
   else if (strcmp(device, "OneWire") == 0) {
     oneWirePin = pinNumber;
   }
@@ -1038,6 +1044,9 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
         servoPin = pinNumber;
         servo.attach(servoPin);
     }
+  }
+  else if (strcmp(device, "water") == 0) {
+    waterPin = pinNumber;
   }
 }
 
@@ -1055,6 +1064,9 @@ void injectConfig(JsonObject& config) {
   }
   if (servoPin != -1) {
     gpio.set(String(servoPin), "servo");
+  }
+  if (waterPin != -1) {
+    gpio.set(String(waterPin), "water");
   }
 
   JsonArray& actions = config.createNestedArray("actions");
@@ -1142,3 +1154,7 @@ void injectGpioMode(JsonObject& mode) {
     }
 }
 
+void ICACHE_RAM_ATTR waterInterrupt()
+{
+  waterPulseCount++;
+}
