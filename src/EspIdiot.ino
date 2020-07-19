@@ -23,9 +23,6 @@
 
 #define DEFAULT_ONE_WIRE_PIN 2
 
-#include <Wire.h>
-#include "I2C.h"
-
 #include "Action.h"
 
 #include "EspControl.h"
@@ -43,15 +40,10 @@
 #include "State.h"
 #include "IdiotWifiServer.h"
 
-#include "I2CSoilMoistureSensor.h"
-
 #include "OLED.h"
 
 #include "Sense.h"
 #include "EspBattery.h"
-
-#define I2C_PIN_1 14 // SDA
-#define I2C_PIN_2 12 // SDC
 
 #define HARD_RESET_PIN 0
 
@@ -114,9 +106,6 @@ unsigned long pumpStartTime = 0L;
 unsigned long pumpStopTime = 0L;
 #define PUMP_START_WAIT_SECONDS 30
 #define PUMP_OFF_WAIT_MINUTES 10
-
-#define DISPLAY_CONTROL_PIN 0
-OLED oled(I2C_PIN_1, I2C_PIN_2);
 
 unsigned long boot_time = 0L;
 
@@ -499,8 +488,6 @@ void loop(void)
           attachInterrupt(waterPin, waterInterrupt, FALLING);
         }
 
-        IdiotI2C.readI2C(I2C_PIN_1, I2C_PIN_2, senses);
-
         if (powerMode == HIGH) {
           int analogIn = int(((1024 - analogRead(A0))*100) / 1024);
           senses["A0"] = analogIn;
@@ -645,21 +632,6 @@ void validate(JsonObject& senses) {
 
             wrong = true;
         } 
-        else if (!strcmp(key, "I2C-32c")) {
-            if (value < 200 || value > 1000) {
-                wrong = true;
-            }
-        }
-        else if (!strcmp(key, "I2C-32t")) {
-            if (value < -50 || value > 100) {
-                wrong = true;
-            }
-        }
-        else if (!strcmp(key, "I2C-8") || !strcmp(key, "I2C-9") || !strcmp(key, "I2C-10")) {
-            if (value < 0 || value > 1024) {
-                wrong = true;
-            }
-        }
         else if (!strcmp(key, "OW")) {
             if (value < -100 || value > 100) {
                 wrong = true;
