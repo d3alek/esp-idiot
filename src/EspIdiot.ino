@@ -1,4 +1,4 @@
-#define VERSION "z124"
+#define VERSION "z126"
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -104,8 +104,9 @@ float serveLocallySeconds;
 
 unsigned long pumpStartTime = 0L;
 unsigned long pumpStopTime = 0L;
-#define PUMP_START_WAIT_SECONDS 30
-#define PUMP_OFF_WAIT_MINUTES 10
+#define PUMP_PROTECT_WAIT_SECONDS 60
+#define PUMP_START_WAIT_SECONDS 60
+#define PUMP_OFF_WAIT_MINUTES 60
 
 unsigned long boot_time = 0L;
 
@@ -546,6 +547,7 @@ void loop(void)
         }
         if (coolOffStartTime == 0) {
             coolOffStartTime = millis();
+            WiFi.disconnect(); // Това е нужно защото някой път губим връзка без да усетим
         }
         else if (millis() - coolOffStartTime < COOL_OFF_WAIT_SECONDS * 1000) {
             Serial.print('.');
@@ -743,7 +745,7 @@ void doActions(JsonObject& senses) {
                     if (value >= action.getThreshold() && value <= action.getThreshold() + action.getDelta()) {
                         if (action.getGpio() == PUMP) {
                           if (ensurePumpIsOff) {
-                            Serial.printf("? pump is within time window but no pulses detected so pump should be off\n"); 
+                            Serial.printf("? no pulses detected so pump should be off\n"); 
                             ensureGpio(action.getGpio(), !aboveThresholdGpioState);
                             continue;
                           }
@@ -833,21 +835,36 @@ void ensureGpio(int gpio, int state) {
     digitalWrite(gpio, state);
 
     if (gpio == PUMP) {
-      if (state == HIGH && pumpStartTime == 0L) {
-        Serial.printf("? pump starts now\n");
-        pumpStartTime = millis();
-        pumpStopTime = 0L;
-        if (waterPin != -1) {
-          pinMode(waterPin, INPUT);
-          attachInterrupt(waterPin, waterInterrupt, FALLING);
+
+      if (state == HIGH) {
+        if (pumpStartTime != 0L) {
+          Serial.printf("! expected pump to be off but appears to be on\n");
+        }
+        if (millis() < PUMP_PROTECT_WAIT_SECONDS*1000) {
+          Serial.print("? do not start pump yet as I have booted recently\n");
+        }
+        if (pumpStopTime != 0L && millis() - pumpStopTime < PUMP_PROTECT_WAIT_SECONDS * 1000) {
+          Serial.print("? do not start pump yet as it has stopped recently\n");
+        }
+        else {
+          Serial.printf("? pump starts now\n");
+          pumpStartTime = millis();
+          pumpStopTime = 0L;
         }
       }
-      if (state == LOW) {
-        if (pumpStartTime != 0L) {
-          Serial.printf("? pump stops now\n");
+      else {
+        if (pumpStartTime == 0L) {
+          Serial.printf("! expected pump to be on but appears to be off\n");
         }
-        pumpStartTime = 0L;
-        pumpStopTime = millis();
+
+        if (millis() - pumpStartTime < PUMP_PROTECT_WAIT_SECONDS * 1000) {
+          Serial.print("? do not stop pump yet as it has started recently\n");
+        }
+        else {
+          Serial.printf("? pump stops now\n");
+          pumpStartTime = 0L;
+          pumpStopTime = millis();
+        }
       }
     }
   }
@@ -1018,7 +1035,12 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
     }
   }
   else if (strcmp(device, "water") == 0) {
+    if (waterPin != -1) {
+      detachInterrupt(waterPin);
+    }
     waterPin = pinNumber;
+    pinMode(waterPin, INPUT);
+    attachInterrupt(waterPin, waterInterrupt, FALLING);
   }
 }
 
