@@ -105,7 +105,7 @@ float serveLocallySeconds;
 unsigned long pumpStartTime = 0L;
 unsigned long pumpStopTime = 0L;
 #define PUMP_PROTECT_WAIT_SECONDS 60
-#define PUMP_START_WAIT_SECONDS 60
+#define PUMP_START_WAIT_SECONDS 30
 #define PUMP_OFF_WAIT_MINUTES 60
 
 unsigned long boot_time = 0L;
@@ -471,7 +471,7 @@ void loop(void)
         if (waterPin != -1) {
           detachInterrupt(waterPin);
           if (ensurePumpIsOff == false
-            && waterPulseCount == 0L
+            && waterPulseCount < 30L
             && (pumpStartTime != 0L && millis() - pumpStartTime > PUMP_START_WAIT_SECONDS * 1000)) {
             ensurePumpIsOff = true;
             Serial.printf("? ensure pump is off\n");
@@ -502,16 +502,21 @@ void loop(void)
             senses["time"] = seconds_today();
         }
 
+        yield();
         char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
         strcpy(readSensesResultCopy, readSensesResult);
         enrichSenses(senses, readSensesResultCopy);
 
         validate(senses);
+        yield();
 
         updateExpectations(senses);
+        yield();
 
         senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
         Serial.printf("[result]\n%s\n", readSensesResult);
+
+        yield();
 
         doActions(senses);
 
@@ -699,6 +704,7 @@ void doActions(JsonObject& senses) {
     bool autoAction[actionsSize];
 
     for (i = 0; i < actionsSize; ++i) {
+        yield();
         Action action = actions[i];
         Serial.print("? configured action ");
         action.print();
@@ -714,6 +720,7 @@ void doActions(JsonObject& senses) {
 
     for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
     {
+        yield();
         const char* key = it->key;
         Sense sense;
         if (!strcmp(key, "time")) {
@@ -730,7 +737,6 @@ void doActions(JsonObject& senses) {
             if (!strcmp(action.getSense(), key)) {
                 bool time_action = !strcmp(key, "time");
                 int value = sense.value; 
-                Serial.printf("? found sense %s for the action with value [%d]\n", key, value);
                 if (value == WRONG_VALUE) {
                     Serial.printf("!!! could not parse or wrong value %d\n", value);
                 }
@@ -745,7 +751,7 @@ void doActions(JsonObject& senses) {
                     if (value >= action.getThreshold() && value <= action.getThreshold() + action.getDelta()) {
                         if (action.getGpio() == PUMP) {
                           if (ensurePumpIsOff) {
-                            Serial.printf("? no pulses detected so pump should be off\n"); 
+                            Serial.printf("? pump should be off flag is set\n"); 
                             ensureGpio(action.getGpio(), !aboveThresholdGpioState);
                             continue;
                           }
@@ -781,6 +787,7 @@ void doActions(JsonObject& senses) {
     Serial.println("[set hardcoded modes]");
     int gpio;
     for (i = 0; i < GpioMode.getSize(); ++i) {
+        yield();
         gpio = GpioMode.getGpio(i);
         if (!GpioMode.isAuto(gpio)) {
             ensureGpio(gpio, GpioMode.getMode(i));
@@ -829,42 +836,40 @@ void ensureGpio(int gpio, int state) {
     }
   }
   else if (digitalRead(gpio) != state) {
+    if (gpio == PUMP) {
+      if (state == HIGH) {
+        if (millis() < PUMP_PROTECT_WAIT_SECONDS*1000) {
+          Serial.print("? do not start pump yet as I have booted recently\n");
+          return;
+        }
+      }
+      else if (pumpStopTime != 0L && millis() - pumpStopTime < PUMP_PROTECT_WAIT_SECONDS * 1000) {
+        Serial.print("? do not start pump yet as it has stopped recently\n");
+        return;
+      }
+    }
     gpioStateChanged = true;
     Serial.printf("? gpio %d to %d\n", gpio, state);
     pinMode(gpio, OUTPUT);
     digitalWrite(gpio, state);
 
     if (gpio == PUMP) {
-
       if (state == HIGH) {
         if (pumpStartTime != 0L) {
           Serial.printf("! expected pump to be off but appears to be on\n");
         }
-        if (millis() < PUMP_PROTECT_WAIT_SECONDS*1000) {
-          Serial.print("? do not start pump yet as I have booted recently\n");
-        }
-        if (pumpStopTime != 0L && millis() - pumpStopTime < PUMP_PROTECT_WAIT_SECONDS * 1000) {
-          Serial.print("? do not start pump yet as it has stopped recently\n");
-        }
-        else {
-          Serial.printf("? pump starts now\n");
-          pumpStartTime = millis();
-          pumpStopTime = 0L;
-        }
+        Serial.printf("? pump starts now\n");
+        pumpStartTime = millis();
+        pumpStopTime = 0L;
       }
       else {
         if (pumpStartTime == 0L) {
           Serial.printf("! expected pump to be on but appears to be off\n");
         }
 
-        if (millis() - pumpStartTime < PUMP_PROTECT_WAIT_SECONDS * 1000) {
-          Serial.print("? do not stop pump yet as it has started recently\n");
-        }
-        else {
-          Serial.printf("? pump stops now\n");
-          pumpStartTime = 0L;
-          pumpStopTime = millis();
-        }
+        Serial.printf("? pump stops now\n");
+        pumpStartTime = 0L;
+        pumpStopTime = millis();
       }
     }
   }
