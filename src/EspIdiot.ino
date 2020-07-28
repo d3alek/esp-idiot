@@ -148,7 +148,7 @@ void toState(state_enum newState) {
 
 // A manual reset is needed after a Serial flash, otherwise this throws the ESP into oblivion
 // See https://github.com/esp8266/Arduino/issues/1722
-void updateFromS3(char* updatePath) {
+void updateFromServer(char* updatePath) {
   toState(ota_update);
 
   char updateUrl[100];
@@ -942,8 +942,8 @@ void loadConfigFromJson(JsonObject config, bool from_server) {
             char fileName[20];
             strcpy(fileName, "");
             strcat(fileName, version);
-            strcat(fileName, ".bin");
-            updateFromS3(fileName);
+            strcat(fileName, ".bin.gz");
+            updateFromServer(fileName);
             ESP.restart();
         }
     }
