@@ -13,7 +13,6 @@ void IdiotGpioMode::set(int gpio, const char* modeString) {
         Serial.print(" because it is netiher A, B or C. Ignoring call.");
         return;
     }
-    bool isAuto;
     int mode;
 
     if (strlen(modeString) != 1) {

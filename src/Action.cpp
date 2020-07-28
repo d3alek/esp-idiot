@@ -42,7 +42,6 @@ int Action::getGpio() {
 }
 
 bool Action::fromConfig(const char* action_string) {
-    int string_length = strlen(action_string);
     const char* gpio_begin = strchr(action_string, (int)'|');
     if (gpio_begin == NULL) {
         return false;

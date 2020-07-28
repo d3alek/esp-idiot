@@ -33,7 +33,7 @@ void OneWireSensors::readOneWire(int oneWirePin, JsonObject jsonObject) {
             readDS18x20(oneWire, addr, device, jsonObject);
         }
         else {
-            Serial.printf("!!! %s type not recognized from byte 0x%02X\n", addr[0]);
+            Serial.printf("!!! type not recognized from byte 0x%02X\n", addr[0]);
             continue;
         }
     }
@@ -56,7 +56,6 @@ void OneWireSensors::readDS18x20(OneWire& oneWire, byte* addr, char* device, Jso
         return;
     }
 
-    byte present = 0;
     byte i;
     byte data[12];
 
@@ -67,7 +66,7 @@ void OneWireSensors::readDS18x20(OneWire& oneWire, byte* addr, char* device, Jso
     delay(1000);     // maybe 750ms is enough, maybe not
     // we might do a ds.depower() here, but the reset will take care of it.
 
-    present = oneWire.reset();
+    oneWire.reset();
     oneWire.select(addr);    
     oneWire.write(0xBE);         // Read Scratchpad
 

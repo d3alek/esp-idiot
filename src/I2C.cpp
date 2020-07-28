@@ -17,7 +17,7 @@ void I2C::readI2C(int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
   
   scan();
 
-  int available, error, value, expected_one_count, actual_one_count;
+  int available, error, value;
   byte low_byte, high_byte, version_byte;
   for (int i = 0; i < devices_size; ++i) {
     int device = devices[i];
@@ -111,11 +111,11 @@ void I2C::readI2C(int i2cPin1, int i2cPin2, JsonObject& jsonObject) {
 
         value = word(high_byte, low_byte);
 
-        expected_one_count = get_expected_one_count(value, version_byte);
+        // вече не се ползва? get_expected_one_count(value, version_byte);
 
         value = get_value(value, version_byte); 
 
-        actual_one_count = count_ones(value);
+        // вече не се ползва? count_ones(value);
         
         String key_string = String(key);
         if (version_byte < MINIMUM_VERSION) {
