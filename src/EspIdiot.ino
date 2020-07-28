@@ -438,10 +438,9 @@ void loop(void)
         }
     }
     else if (state == read_senses) {
-        StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
+        StaticJsonDocument<MAX_READ_SENSES_RESULT_SIZE> doc;
+        JsonObject senses = doc.as<JsonObject>();
         // parseObject and print the same char array do not play well, so pass it a copy here
-        JsonObject& senses = jsonBuffer.createObject();
-
         if (dht11Pin != -1) {
             DHT dht11(dht11Pin, DHT11);
             dht11.begin();
@@ -513,7 +512,7 @@ void loop(void)
         updateExpectations(senses);
         yield();
 
-        senses.printTo(readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
+        serializeJson(senses, readSensesResult, MAX_READ_SENSES_RESULT_SIZE);
         Serial.printf("[result]\n%s\n", readSensesResult);
 
         yield();
@@ -567,26 +566,27 @@ void loop(void)
     }
 }
 
-void enrichSenses(JsonObject& senses, char* previous_senses_string) {
+void enrichSenses(JsonObject senses, char* previous_senses_string) {
     Serial.println("[enrich senses]");
     // enrich senses with previous expectation, ssd, assume wrong if it starts with "w"
-    StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> jsonBuffer;
-    JsonObject& previous_senses = jsonBuffer.parseObject(previous_senses_string);
-    if (!previous_senses.success()) {
-        Serial.println("? could not parse previous senses, assuming none");
+    StaticJsonDocument<MAX_READ_SENSES_RESULT_SIZE> previous_senses;
+    auto error = deserializeJson(previous_senses, previous_senses_string);
+    if (error) {
+        Serial.println("? could not parse previous senses second time, assuming none. Error is:");
+        Serial.println(error.c_str());
     }
 
     bool wrong;
     const char* key;
     float value;
-    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
+    for (JsonPair p: senses) {
         wrong = false;
-        key = it->key;
+        key = p.key().c_str();
         if (!strcmp(key, "time")) {
             continue;
         }
-        if (it->value.is<const char*>()) {
-            const char* value_string = it->value; 
+        if (p.value().is<const char*>()) {
+            const char* value_string = p.value(); 
             if (strlen(value_string) > 0 && value_string[0] == 'w') {
                 wrong = true;    
                 value = atoi(value_string+1);
@@ -598,7 +598,7 @@ void enrichSenses(JsonObject& senses, char* previous_senses_string) {
             }
         }
         else {
-            value = it->value;
+            value = p.value();
         }
         senses[key] = Sense().fromJson(previous_senses[key]).withValue(value).withWrong(wrong).toString();
     }
@@ -620,14 +620,14 @@ bool meetsExpectations(const char* name, Sense sense) {
     return result;
 }
 
-void validate(JsonObject& senses) {
+void validate(JsonObject senses) {
     Serial.println("[validate senses]");
-    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
-        const char* key = it->key;
+    for (JsonPair p: senses) {
+        const char* key = p.key().c_str();
         if (!strcmp(key, "time")) {
             continue;
         }
-        Sense sense = Sense().fromJson(it->value);
+        Sense sense = Sense().fromJson(p.value());
         float value = sense.value;
         if (sense.wrong) {
             continue;
@@ -656,7 +656,7 @@ void validate(JsonObject& senses) {
 }
 
 // Modified Welford algorithm to use windowed-mean instead of true mean
-void updateExpectations(JsonObject& senses) {
+void updateExpectations(JsonObject senses) {
     Serial.println("[update expectations]");
     int previous_ssd, new_ssd;
     float previous_expectation, new_expectation;
@@ -667,12 +667,12 @@ void updateExpectations(JsonObject& senses) {
     float prior_weight = float(SENSE_EXPECTATIONS_WINDOW-1)/SENSE_EXPECTATIONS_WINDOW;
     float posterior_weight = 1./SENSE_EXPECTATIONS_WINDOW;
     float ssd_update;
-    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it) {
-        key = it->key;
+    for (JsonPair p: senses) {
+        key = p.key().c_str();
         if (!strcmp(key, "time")) {
             continue;
         }
-        sense = sense.fromJson(it->value);
+        sense = sense.fromJson(p.value());
         value = sense.value;
         previous_expectation = sense.expectation;
         previous_ssd = sense.ssd;
@@ -698,7 +698,7 @@ void updateExpectations(JsonObject& senses) {
     }
 }
 
-void doActions(JsonObject& senses) {
+void doActions(JsonObject senses) {
     Serial.println("[do actions]");
     int i = 0;
     bool autoAction[actionsSize];
@@ -718,16 +718,16 @@ void doActions(JsonObject& senses) {
         }
     }
 
-    for (JsonObject::iterator it=senses.begin(); it!=senses.end(); ++it)
+    for (JsonPair p: senses)
     {
         yield();
-        const char* key = it->key;
+        const char* key = p.key().c_str();
         Sense sense;
         if (!strcmp(key, "time")) {
-            sense = sense.withValue(it->value).withWrong(false); // time sense, if present, is never wrong
+            sense = sense.withValue(p.value()).withWrong(false); // time sense, if present, is never wrong
         }  
         else {
-            sense = sense.fromJson(it->value);
+            sense = sense.fromJson(p.value());
         }
         for (i = 0; i < actionsSize; ++i) {
             if (!autoAction[i]) {
@@ -888,7 +888,7 @@ void requestState() {
     }
 }
 
-bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject& jsonObject) {
+bool readTemperatureHumidity(const char* dhtType, DHT dht, JsonObject jsonObject) {
   Serial.print("DHT ");
   
   float temp_c, humidity;
@@ -919,10 +919,12 @@ String buildSenseKey(const char* sensor, const char* readingName) {
 }
 
 void loadConfig(char* string, bool from_server) {
-  StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
-  JsonObject& root = jsonBuffer.parseObject(string);
-  if (!root.success()) {
+  StaticJsonDocument<CONFIG_MAX_SIZE+100> doc;
+  auto error = deserializeJson(doc, string);
+  JsonObject root = doc.as<JsonObject>();
+  if (error) {
     Serial.printf("!!! could not parse JSON from config string:\n%s\n[save valid config]\n", string);
+    Serial.println(error.c_str());
     saveConfig();
     return;
   }
@@ -930,7 +932,7 @@ void loadConfig(char* string, bool from_server) {
   loadConfigFromJson(root, from_server);
 }
 
-void loadConfigFromJson(JsonObject& config, bool from_server) {
+void loadConfigFromJson(JsonObject config, bool from_server) {
     if (from_server && config.containsKey("version")) {
         const char* version = config["version"];
         if (strcmp(version, VERSION) == 0) {
@@ -975,19 +977,19 @@ int seconds_today() {
     return (boot_time + seconds_since_boot()) % (60*60*24);
 }
 
-void loadMode(JsonObject& modeJson) {
-    for (JsonObject::iterator it=modeJson.begin(); it!=modeJson.end(); ++it) {
-        const char* key = it->key;
+void loadMode(JsonObject modeJson) {
+    for (JsonPair p: modeJson) {
+        const char* key = p.key().c_str();
         int pinNumber = atoi(key);
-        GpioMode.set(pinNumber, it->value.asString());
+        GpioMode.set(pinNumber, p.value().as<const char*>());
     }
 }
 
-void loadActions(JsonArray& actionsJson) {
+void loadActions(JsonArray actionsJson) {
     actionsSize = 0;
-    for (JsonArray::iterator it=actionsJson.begin(); it!=actionsJson.end(); ++it)
+    for (JsonVariant v: actionsJson)
     {
-        const char* action_string = *it;
+        const char* action_string = v.as<const char*>();
         Action action;
         bool success = action.fromConfig(action_string);
 
@@ -1006,12 +1008,12 @@ void loadActions(JsonArray& actionsJson) {
     }
 }
 
-void loadGpioConfig(JsonObject& gpio) {
-  for (JsonObject::iterator it=gpio.begin(); it!=gpio.end(); ++it)
+void loadGpioConfig(JsonObject gpio) {
+  for (JsonPair p: gpio)
   {
-    const char* key = it->key;
+    const char* key = p.key().c_str();
     int pinNumber = atoi(key);
-    makeDevicePinPairing(pinNumber, it->value.asString());
+    makeDevicePinPairing(pinNumber, p.value().as<const char*>());
   }
 }
 
@@ -1050,28 +1052,28 @@ void makeDevicePinPairing(int pinNumber, const char* device) {
 }
 
 // make sure this is synced with makeDevicePinPairing
-void injectConfig(JsonObject& config) {
-  JsonObject& gpio = config.createNestedObject("gpio");
+void injectConfig(JsonObject config) {
+  JsonObject gpio = config.createNestedObject("gpio");
   if (dht11Pin != -1) {
-    gpio.set(String(dht11Pin), "DHT11"); // this string conversion is necessary because otherwise ArduinoJson corrupts the key
+    gpio[String(dht11Pin)] = "DHT11"; // UNTESTED WITH NEWEST this string conversion is necessary because otherwise ArduinoJson corrupts the key
   }
   if (dht22Pin != -1) {
-    gpio.set(String(dht22Pin), "DHT22");
+    gpio[String(dht22Pin)] = "DHT22";
   }
   if (oneWirePin != -1) {
-    gpio.set(String(oneWirePin), "OneWire");
+    gpio[String(oneWirePin)] = "OneWire";
   }
   if (servoPin != -1) {
-    gpio.set(String(servoPin), "servo");
+    gpio[String(servoPin)] = "servo";
   }
   if (waterPin != -1) {
-    gpio.set(String(waterPin), "water");
+    gpio[String(waterPin)] = "water";
   }
 
-  JsonArray& actions = config.createNestedArray("actions");
+  JsonArray actions = config.createNestedArray("actions");
   injectActions(actions);
 
-  JsonObject& mode = config.createNestedObject("mode");
+  JsonObject mode = config.createNestedObject("mode");
   injectGpioMode(mode);
 
   if (powerMode == LOW) {
@@ -1080,18 +1082,18 @@ void injectConfig(JsonObject& config) {
 }
 
 void saveConfig() {
-  StaticJsonBuffer<CONFIG_MAX_SIZE+100> jsonBuffer;
-  JsonObject& root = jsonBuffer.createObject();
+  StaticJsonDocument<CONFIG_MAX_SIZE+100> doc;
+  JsonObject root = doc.as<JsonObject>();
 
   injectConfig(root);
 
   char configString[CONFIG_MAX_SIZE];
-  root.printTo(configString, CONFIG_MAX_SIZE);
+  serializeJson(root, configString, CONFIG_MAX_SIZE);
   Serial.printf("[save config]\n%s\n", configString);
   PersistentStore.putConfig(configString);
 }
 
-void injectActions(JsonArray& actionsJson) {
+void injectActions(JsonArray actionsJson) {
   for (int i = 0; i < actionsSize; ++i) {
     Action action = actions[i];
     char action_string[50];
@@ -1101,46 +1103,50 @@ void injectActions(JsonArray& actionsJson) {
 }
 
 void buildStateString(char* stateJson) {
-  StaticJsonBuffer<MAX_STATE_JSON_LENGTH> jsonBuffer;
+  StaticJsonDocument<MAX_STATE_JSON_LENGTH> doc;
 
-  JsonObject& root = jsonBuffer.createObject();
-  JsonObject& stateObject = root.createNestedObject("state");
-  JsonObject& reported = stateObject.createNestedObject("reported");
+  JsonObject stateObject = doc.createNestedObject("state");
+  JsonObject reported = stateObject.createNestedObject("reported");
 
   reported["wifi"] = WiFi.SSID();
   reported["state"] = STATE_STRING[state];
   reported["version"] = VERSION;
   reported["b"] = boot_time;
   
-  JsonObject& gpio = reported.createNestedObject("write");
+  JsonObject gpio = reported.createNestedObject("write");
   injectGpioState(gpio);
   
-  JsonObject& config = reported.createNestedObject("config");
+  JsonObject config = reported.createNestedObject("config");
 
   injectConfig(config);
   
-  StaticJsonBuffer<MAX_READ_SENSES_RESULT_SIZE> readSensesResultBuffer;
-  // parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
+  StaticJsonDocument<MAX_READ_SENSES_RESULT_SIZE> readSensesResultDoc;
+  // DEPRECATED parseObject modifies the char array, but we need it on next iteration to calculate expectation and variance, so pass it a copy here
   char readSensesResultCopy[MAX_READ_SENSES_RESULT_SIZE];
   strcpy(readSensesResultCopy, readSensesResult);
-  reported["senses"] = readSensesResultBuffer.parseObject(readSensesResultCopy);
+  auto error = deserializeJson(readSensesResultDoc, readSensesResultCopy);
+  if (error) {
+        Serial.println("? could not parse previous senses first time, assuming none. Error is:");
+        Serial.println(error.c_str());
+  }
+  reported["senses"] = readSensesResultDoc;
   
-  int actualLength = root.measureLength();
+  int actualLength = measureJson(doc);
   if (actualLength >= MAX_STATE_JSON_LENGTH) {
     Serial.println("!!! resulting JSON is too long, expect errors");
   }
 
-  root.printTo(stateJson, MAX_STATE_JSON_LENGTH);
+  serializeJson(doc, stateJson, MAX_STATE_JSON_LENGTH);
   return;
 }
 
-void injectGpioState(JsonObject& gpio) { 
+void injectGpioState(JsonObject gpio) { 
   for (int i = 0; i < GpioState.getSize(); ++i) {
     gpio[String(GpioState.getGpio(i))] = GpioState.getState(i);
   }
 }
 
-void injectGpioMode(JsonObject& mode) { 
+void injectGpioMode(JsonObject mode) { 
     int gpio;
     for (int i = 0; i < GpioMode.getSize(); ++i) {
         gpio = GpioMode.getGpio(i);

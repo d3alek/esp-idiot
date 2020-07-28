@@ -1,6 +1,6 @@
 #include "OneWireSensors.h"
 
-void OneWireSensors::readOneWire(int oneWirePin, JsonObject& jsonObject) {
+void OneWireSensors::readOneWire(int oneWirePin, JsonObject jsonObject) {
     Serial.println("[one wire]");
     OneWire oneWire(oneWirePin);
     int devicesFound = 0;
@@ -42,7 +42,7 @@ void OneWireSensors::readOneWire(int oneWirePin, JsonObject& jsonObject) {
 
 // code from 
 // https://github.com/PaulStoffregen/OneWire/blob/master/examples/DS18x20_Temperature/DS18x20_Temperature.pde
-void OneWireSensors::readDS18x20(OneWire& oneWire, byte* addr, char* device, JsonObject& jsonObject) {
+void OneWireSensors::readDS18x20(OneWire& oneWire, byte* addr, char* device, JsonObject jsonObject) {
 
     byte type_s;
     if (addr[0] == 0x10) {

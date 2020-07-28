@@ -64,13 +64,12 @@ void DisplayController::refresh(state_enum state, bool force) {
 void DisplayController::update(JsonObject& senses) {
     Serial.println("[display updated senses]");
     int counter = 0;
-    const char* key;
-    for (JsonObject::iterator it = senses.begin(); it != senses.end(); ++it) {
-        key = it->key;
+    for (JsonPair p: senses) {
+        const char* key = p.key().c_str();
         if (!strcmp(key, "time")) {
             continue;
         }
-        displayables[counter++] = Displayable(it->key, Sense().fromJson(it->value));
+        displayables[counter++] = Displayable(key, Sense().fromJson(p.value()));
         if (counter >= MAX_DISPLAYABLES) {
             break;
         }

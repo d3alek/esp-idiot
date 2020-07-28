@@ -8,10 +8,10 @@
 
 class OneWireSensors {
   public:
-    void readOneWire(int, JsonObject&); 
+    void readOneWire(int, JsonObject); 
   private:
     void bytesToHex(char*, const byte*);
-    void readDS18x20(OneWire&, byte[], char*, JsonObject&); 
+    void readDS18x20(OneWire&, byte[], char*, JsonObject); 
 };
 
 
