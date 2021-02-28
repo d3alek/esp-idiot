@@ -1,1 +1,1 @@
-pio run -t upload -e $1
+pio run -t upload -e "$@"

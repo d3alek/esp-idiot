@@ -1,9 +1,13 @@
-#define VERSION "z134"
 
+#define VERSION "z135"
 #include <Arduino.h>
 #include <Servo.h>
 
 #include <ESP8266WiFi.h>
+
+// https://github.com/esp8266-examples/ota-basic/blob/master/ota-basic/ota-basic.ino
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
@@ -66,6 +70,7 @@ const int chipId = ESP.getChipId();
 
 const char uuidPrefix[] = "ESP";
 
+WiFiServer TelnetServer(8266);
 WiFiClient wclient;
 PubSubClient mqttClient(wclient);
 
@@ -241,6 +246,7 @@ void hardReset() {
 
 void setup(void)
 {
+    TelnetServer.begin();
     last_loop = millis();
     tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
 
@@ -276,13 +282,26 @@ void setup(void)
 
     pinMode(HARD_RESET_PIN, INPUT);
     delay(1000);
+
     if(!digitalRead(HARD_RESET_PIN)) {
         hardReset();
+    }
+
+}
+
+volatile unsigned long lastInterruptTime = 0;
+volatile unsigned long debounceDelay = 300; 
+
+void ICACHE_RAM_ATTR interruptDisplayButtonPressed() {
+    if (millis() - lastInterruptTime > debounceDelay) {
+        display.changeMode();
+        lastInterruptTime = millis();
     }
 }
 
 void loop(void)
 {
+    ArduinoOTA.handle();
     last_loop = millis();
     display.refresh(state);
     idiotWifiServer.handleClient();
@@ -292,6 +311,9 @@ void loop(void)
     }
 
     if (state == boot) {
+        pinMode(DISPLAY_CONTROL_PIN, INPUT);
+        attachInterrupt(DISPLAY_CONTROL_PIN, interruptDisplayButtonPressed, FALLING);
+
         configChanged = false;
         configReceived = false;
         gpioStateChanged = false;
@@ -413,6 +435,33 @@ void loop(void)
         }
     }
     else if (state == connect_to_mqtt) {
+        ArduinoOTA.onStart([]() {
+          Serial.println("? OTA Start");
+        });
+
+        ArduinoOTA.onEnd([]() {
+          Serial.println("? OTA End");
+          Serial.println("? Rebooting...");
+        });
+
+        ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+          Serial.printf("? Progress: %u%%\r\n", (progress / (total / 100)));
+        });
+
+        ArduinoOTA.onError([](ota_error_t error) {
+          Serial.printf("! Error[%u]: ", error);
+          if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+          else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+          else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+          else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+          else if (error == OTA_END_ERROR) Serial.println("End Failed");
+        });
+
+        ArduinoOTA.begin();
+
+        Serial.print("? ArduinoOTA started. IP address: ");
+        Serial.println(WiFi.localIP());
+
         mqttConnect();
         toState(load_config);
         return;
@@ -560,13 +609,14 @@ void loop(void)
         }
         if (coolOffStartTime == 0) {
             coolOffStartTime = millis();
-            WiFi.disconnect(); // Това е нужно защото някой път губим връзка без да усетим
         }
         else if (millis() - coolOffStartTime < COOL_OFF_WAIT_SECONDS * 1000) {
             Serial.print('.');
             delay(100);
         }
         else {
+            WiFi.disconnect(); // Това е нужно защото някой път губим връзка без да усетим
+            detachInterrupt(DISPLAY_CONTROL_PIN); 
             toState(boot);
         }
     }
