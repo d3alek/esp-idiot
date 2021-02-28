@@ -18,6 +18,7 @@
 
 #include <ArduinoJson.h>
 
+#include <Wire.h>
 #include <OneWire.h>
 #include "OneWireSensors.h"
 
@@ -41,6 +42,8 @@
 #include "IdiotWifiServer.h"
 
 #include "OLED.h"
+#include "Displayable.h"
+#include "DisplayController.h"
 
 #include "Sense.h"
 #include "EspBattery.h"
@@ -52,8 +55,7 @@
 #define MAX_READ_SENSES_RESULT_SIZE 512
 #define DELTA_WAIT_SECONDS 5
 #define MAX_WIFI_WAIT_SECONDS 30
-#define COOL_OFF_WAIT_SECONDS 15
-#define DEFAULT_PUBLISH_INTERVAL 60
+#define COOL_OFF_WAIT_SECONDS 3
 #define DEFAULT_SERVE_LOCALLY_SECONDS 2
 #define GPIO_SENSE "gpio-sense"
 #define MAX_ACTIONS_SIZE 10
@@ -107,6 +109,13 @@ unsigned long pumpStopTime = 0L;
 #define PUMP_PROTECT_WAIT_SECONDS 60
 #define PUMP_START_WAIT_SECONDS 30
 #define PUMP_OFF_WAIT_MINUTES 180
+
+#define I2C_PIN_1 2 // SDA
+#define I2C_PIN_2 4 // SDC
+
+#define DISPLAY_CONTROL_PIN 0
+OLED oled(I2C_PIN_1, I2C_PIN_2);
+DisplayController display(oled);
 
 unsigned long boot_time = 0L;
 
@@ -254,6 +263,11 @@ void setup(void)
 
     PersistentStore.begin();
 
+    Wire.pins(I2C_PIN_1, I2C_PIN_2);
+	  Wire.begin();
+    Wire.setClockStretchLimit(2000); // in µs
+    display.begin();
+
     WiFi.mode(WIFI_STA);
 
     ensureGpio(PIN_A, 0);
@@ -270,6 +284,7 @@ void setup(void)
 void loop(void)
 {
     last_loop = millis();
+    display.refresh(state);
     idiotWifiServer.handleClient();
 
     if (mqttClient.connected()) {
