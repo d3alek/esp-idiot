@@ -1,6 +1,7 @@
 VERSION=$(cat src/EspIdiot.ino | grep 'define VERSION' | awk '{print $3}')
 VERSION="${VERSION%\"}"
 VERSION="${VERSION#\"}"
+FIRMWARE_DIR=.pio/build/modwifi
 
 if [[ -z "$VERSION" ]]; then
     echo "src/EspIdiot.ino not found. Exiting."
@@ -14,10 +15,13 @@ if scp -o "StrictHostKeyChecking no" -P 8902 shiptechnic@otselo.eu:$BIN_FILE /tm
     exit 1
 fi
 
+echo "Removing old binaries"
+rm -f $FIRMWARE_DIR/firmware.bin $FIRMWARE_DIR/firmware.bin.gz
+
 echo "Pushing prod version $VERSION..."
 
-pio run && \
-  gzip -9 .pioenvs/esp12e/firmware.bin
-  cp .pioenvs/esp12e/firmware.bin.gz $BIN_FILE 
-  scp -o "StrictHostKeyChecking no" -P 8902 .pioenvs/esp12e/firmware.bin.gz shiptechnic@otselo.eu:$BIN_FILE && \
+pio run -e modwifi && \
+  gzip -f -9 $FIRMWARE_DIR/firmware.bin
+  cp $FIRMWARE_DIR/firmware.bin.gz $BIN_FILE
+  scp -o "StrictHostKeyChecking no" -P 8902 $FIRMWARE_DIR/firmware.bin.gz shiptechnic@otselo.eu:$BIN_FILE && \
   echo "Done."
