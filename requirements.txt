@@ -1,4 +1,4 @@
-bottle==0.12.9
+bottle==0.12.20
 click==5.1
 colorama==0.3.7
 esptool==1.1
